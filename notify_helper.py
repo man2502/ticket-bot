@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
-import os
 import smtplib
 import subprocess
 import sys
 import threading
 import time
 from email.mime.text import MIMEText
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from core.env import env  # noqa: E402
 
 
-def env(name: str, default: str = "") -> str:
-    return (os.getenv(name) or default).strip()
+# Реализация общая — core.env (там же описано, почему пустое значение = default).
 
 
 _PENDING: list[threading.Thread] = []

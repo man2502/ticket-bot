@@ -43,6 +43,22 @@ def _same_interpreter(a: Path, b: Path) -> bool:
         return str(a).lower() == str(b).lower()
 
 
+def _is_entry_script(script: Path) -> bool:
+    """
+    Запущен ли именно этот файл, или его просто импортировали.
+
+    Без этой проверки импорт `railway_check` из теста перезапускал бы сам
+    процесс тестов — с аргументами теста, но под видом монитора.
+    """
+    argv0 = (sys.argv[0] or "").strip()
+    if not argv0:
+        return False
+    try:
+        return Path(argv0).resolve() == script.resolve()
+    except OSError:
+        return False
+
+
 def reexec_with_project_venv(script: str | Path) -> None:
     """
     Перезапустить скрипт интерпретатором из .venv, если запустили не им.
@@ -54,6 +70,8 @@ def reexec_with_project_venv(script: str | Path) -> None:
     if target is None:
         return
     if _same_interpreter(Path(sys.executable), target):
+        return
+    if not _is_entry_script(Path(script)):
         return
 
     script_path = str(Path(script).resolve())

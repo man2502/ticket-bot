@@ -1,13 +1,65 @@
-"""Единая нумерация рейсов: FLIGHT_INDEX 1 = [1], 2 = [2] (как TRAIN_INDEX в railway).
+"""Единая нумерация и выбор рейса: FLIGHT_INDEX 1 = [1], 2 = [2] (как TRAIN_INDEX в railway).
 
 Несколько рейсов: FLIGHT_INDEX=4,3 — сначала [4], затем [3].
+
+Здесь же живут разбор FLIGHT_STRICT / FLIGHT_TIME и человеко-читаемое описание
+режима. Раньше эти три функции были продублированы в `airlines_api/api_booking.py`
+и `airlines_web/steps.py` — а поскольку правки вносились в одну копию, режимы
+двух ботов на одном и том же .env могли разойтись.
+
+Как именно найти рейс — по JSON (api) или по DOM (web) — по-прежнему решает
+каждый модуль сам; общей здесь только настройка.
 """
 
 from __future__ import annotations
 
+import os
+
 
 class FlightIndexError(ValueError):
     pass
+
+
+def _env(name: str, default: str = "") -> str:
+    return (os.getenv(name) or default).strip()
+
+
+def _flag(name: str, default: str = "0") -> bool:
+    return _env(name, default).lower() not in ("0", "false", "no", "")
+
+
+def flight_strict() -> bool:
+    """FLIGHT_STRICT=1 → только указанный рейс/время, без запасного выбора."""
+    return _flag("FLIGHT_STRICT", "0")
+
+
+def flight_prefer_time() -> str:
+    """FLIGHT_TIME=19.20 и 19:20 — одно и то же; точку приводим к двоеточию."""
+    return _env("FLIGHT_TIME").replace(".", ":")
+
+
+def flight_want_indexes() -> list[int]:
+    """FLIGHT_INDEX: 1 = [1], 4,3 = [4] затем [3] — как TRAIN_INDEX в railway."""
+    return parse_flight_indexes(_env("FLIGHT_INDEX", "1"))
+
+
+def flight_selection_label(*, fallback_hint: str = "другие прямые с местами") -> str:
+    """
+    Строка режима выбора для стартового лога.
+
+    fallback_hint различается у ботов: в api запасной рейс это «с местами»,
+    в браузере — «с кнопкой Выбрать». Смысл один, формулировка под интерфейс.
+    """
+    strict = flight_strict()
+    prefer_time = flight_prefer_time()
+    want_idx = format_flight_indexes(flight_want_indexes())
+    mode = "строго (только указанные рейсы)" if strict else "с запасным выбором"
+    if prefer_time:
+        scope = "среди всех рейсов" if strict else "среди доступных"
+        return f"{mode}, время={prefer_time}, {scope}"
+    if strict:
+        return f"{mode}, index={want_idx} (только эти позиции в списке)"
+    return f"{mode}, index={want_idx} (сначала эти, иначе {fallback_hint})"
 
 
 def parse_flight_indexes(raw: str | None, *, default: str = "1") -> list[int]:

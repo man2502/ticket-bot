@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from dotenv import load_dotenv
+
+from core.env import env
 
 CHAPAR_ROOT = Path(__file__).resolve().parent
 DEFAULT_ENV = CHAPAR_ROOT / "chapar_check.env"
 LOCAL_ENV = CHAPAR_ROOT / ".env.local"
 
 
-def env(name: str, default: str = "") -> str:
-    return (os.getenv(name) or default).strip()
+# Реализация общая — core.env (там же описано, почему пустое значение = default).
 
 
 def load_chapar_env(path: Path | str | None = None) -> Path:

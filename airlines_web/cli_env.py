@@ -31,11 +31,13 @@ def parse_book_cli(argv: list[str] | None = None) -> dict:
         profile — имя профиля (--profile aliya → profiles/aliya.env)
         account — слот браузера acc1 / acc2 (не отдельный логин)
         overrides — PASSENGER_IDS, DATES, … из CLI
+        force_rebook — снять блокировку журнала броней (--force-rebook)
     """
     argv = list(argv if argv is not None else sys.argv[1:])
     env_path: Path | None = None
     profile: str | None = None
     account: str | None = None
+    force_rebook = False
     overrides: dict[str, str] = {}
     i = 0
     while i < len(argv):
@@ -64,6 +66,10 @@ def parse_book_cli(argv: list[str] | None = None) -> dict:
             account = arg.split("=", 1)[1]
             i += 1
             continue
+        if arg == "--force-rebook":
+            force_rebook = True
+            i += 1
+            continue
         if arg.startswith("--") and "=" in arg:
             key = arg[2:].split("=", 1)[0].lower()
             val = arg.split("=", 1)[1]
@@ -82,6 +88,7 @@ def parse_book_cli(argv: list[str] | None = None) -> dict:
         "env_path": env_path,
         "profile": profile,
         "account": account,
+        "force_rebook": force_rebook,
         "overrides": overrides,
     }
 

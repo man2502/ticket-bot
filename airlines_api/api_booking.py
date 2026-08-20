@@ -31,12 +31,16 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from core.booking_guard import BookingGuard, booking_key
+from core.term import green
 from api_client import RequestFailed, ResultUnknown, api_call
 from api_env import env, to_api_date
 from flight_index import (
     flight_array_index,
+    flight_prefer_time,
+    flight_selection_label as _selection_label,
+    flight_strict,
+    flight_want_indexes,
     format_flight_indexes,
-    parse_flight_indexes,
 )
 from notify_helper import notify
 from passenger_loader import get_passengers
@@ -62,12 +66,7 @@ PAX_PREFIX = {
     "infant": "infant",
 }
 
-_GREEN = "\033[92m"
-_RESET = "\033[0m"
-
-
-def _green(text: str) -> str:
-    return f"{_GREEN}{text}{_RESET}"
+_green = green  # общая палитра, см. core.term
 
 
 @dataclass
@@ -116,35 +115,9 @@ def payment_type() -> str:
     return (env("API_PAYMENT_TYPE") or "halkbank").strip() or "halkbank"
 
 
-def _env_flag(name: str, default: str = "0") -> bool:
-    return (env(name, default) or default).strip().lower() not in ("0", "false", "no", "")
-
-
-def flight_strict() -> bool:
-    """FLIGHT_STRICT=1 → индекс/время среди всех рейсов, без запасного выбора."""
-    return _env_flag("FLIGHT_STRICT", "0")
-
-
-def flight_want_indexes() -> list[int]:
-    """FLIGHT_INDEX: 1 = [1], 4,3 = [4] затем [3] — как TRAIN_INDEX в railway."""
-    return parse_flight_indexes(env("FLIGHT_INDEX", "1"))
-
-
-def flight_prefer_time() -> str:
-    return (env("FLIGHT_TIME") or "").strip().replace(".", ":")
-
-
 def flight_selection_label() -> str:
-    strict = flight_strict()
-    prefer_time = flight_prefer_time()
-    want_idx = format_flight_indexes(flight_want_indexes())
-    mode = "строго (только указанные рейсы)" if strict else "с запасным выбором"
-    if prefer_time:
-        scope = "среди всех рейсов" if strict else "среди доступных"
-        return f"{mode}, время={prefer_time}, {scope}"
-    if strict:
-        return f"{mode}, index={want_idx} (только эти позиции в списке)"
-    return f"{mode}, index={want_idx} (сначала эти, иначе другие прямые с местами)"
+    """Режим выбора рейса для стартового лога (разбор настроек — в flight_index)."""
+    return _selection_label(fallback_hint="другие прямые с местами")
 
 
 def _flight_skipped(flight: dict[str, Any], summary: str) -> bool:

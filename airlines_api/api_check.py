@@ -39,6 +39,7 @@ import time
 from typing import Any
 
 from core.open_file import open_in_viewer
+from core.term import cyan, green, purple, red
 from core.slots import now_second, precise_sleep
 from core.booking_guard import BookingGuard
 from core.state import load_json, save_json
@@ -80,27 +81,10 @@ from passenger_loader import format_passenger_names, get_passenger_counts_by_typ
 STATE_FILE = API_ROOT / "api_state.json"
 CAPTCHA_IMAGE_PATH = API_ROOT / "api_captcha_last.png"
 
-_PURPLE = "\033[38;5;135m"
-_CYAN = "\033[96m"
-_GREEN = "\033[92m"
-_RED = "\033[91m"
-_RESET = "\033[0m"
-
-
-def _purple(text: str) -> str:
-    return f"{_PURPLE}{text}{_RESET}"
-
-
-def _cyan(text: str) -> str:
-    return f"{_CYAN}{text}{_RESET}"
-
-
-def _green(text: str) -> str:
-    return f"{_GREEN}{text}{_RESET}"
-
-
-def _red(text: str) -> str:
-    return f"{_RED}{text}{_RESET}"
+# Палитра общая (core.term): раньше пять модулей держали свои копии ANSI-кодов,
+# и оттенки успели разъехаться. Плюс core.term не красит вывод, если он идёт
+# не в терминал, а в файл — иначе лог наполняется escape-мусором.
+_purple, _cyan, _green, _red = purple, cyan, green, red
 
 
 def cnn_use_enabled() -> bool:

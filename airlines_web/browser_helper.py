@@ -5,10 +5,16 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+REPO_ROOT = ROOT.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from core.env import env, env_flag  # noqa: E402
 
 _PROFILE_LOCK_NAMES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
 
@@ -101,12 +107,10 @@ def _launch_persistent_context(playwright, *, profile_dir: Path, **kwargs):
         )
 
 
-def env(name: str, default: str = "") -> str:
-    return os.getenv(name, default).strip()
-
-
-def _flag(name: str, default: str = "0") -> bool:
-    return env(name, default).lower() not in ("0", "false", "no", "")
+# env() общий (core.env). Раньше здесь была локальная копия с другим
+# поведением на пустом значении: `NOTIFY_EMAIL=` она возвращала как "",
+# а notify_helper — как default. Одна строка .env означала разное.
+_flag = env_flag
 
 
 def save_bandwidth() -> bool:

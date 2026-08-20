@@ -47,8 +47,13 @@ def load_json(path: Path | str, default: Any = None, *, strict: bool = False) ->
         return {} if default is None else default
 
 
-def save_json(path: Path | str, data: Any, *, indent: int = 2) -> None:
-    """Атомарная запись: tmp в той же папке → fsync → os.replace."""
+def save_json(path: Path | str, data: Any, *, indent: int | None = 2) -> None:
+    """
+    Атомарная запись: tmp в той же папке → fsync → os.replace.
+
+    indent=None — компактный однострочный JSON (для служебных счётчиков,
+    которые человек не читает).
+    """
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
 

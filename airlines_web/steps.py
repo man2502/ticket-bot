@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import os
 import random
 import re
@@ -22,10 +21,16 @@ REPO_ROOT = ROOT.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core.env import env, env_flag
+from core.state import load_json, save_json
+from core.term import cyan
 from flight_index import (
     flight_array_indexes,
+    flight_prefer_time,
+    flight_selection_label as _selection_label,
+    flight_strict,
+    flight_want_indexes,
     format_flight_indexes,
-    parse_flight_indexes,
 )
 
 BASE = "https://turkmenistanairlines.tm"
@@ -46,9 +51,9 @@ class AccountBlocked(Exception):
 class LoginFailed(Exception):
     """Не удалось войти в личный кабинет."""
 
-# ANSI-цвета (captcha CNN)
-_LIGHT_BLUE = "\033[96m"
-_RESET = "\033[0m"
+
+# Подсказки CNN печатаем голубым — палитра общая, см. core.term.
+_light_blue = cyan
 
 
 def goto_retry(
@@ -192,13 +197,8 @@ def _rate_state_path() -> Path:
 
 
 def _load_search_times() -> list[float]:
-    path = _rate_state_path()
-    if not path.exists():
-        return []
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+    """Метки времени прошлых поисков. Битый файл — не повод падать: считаем пустым."""
+    raw = load_json(_rate_state_path(), [])
     if not isinstance(raw, list):
         return []
     out: list[float] = []
@@ -211,10 +211,16 @@ def _load_search_times() -> list[float]:
 
 
 def _save_search_times(times: list[float]) -> None:
-    path = _rate_state_path()
+    """
+    Атомарная запись счётчика.
+
+    Обычный write_text — это truncate + write: Ctrl-C между ними оставлял
+    обрезанный JSON, счётчик обнулялся, и бот уходил за часовой лимит поисков
+    ровно тогда, когда сайт и так злился.
+    """
     try:
-        path.write_text(json.dumps(times), encoding="utf-8")
-    except Exception as exc:  # noqa: BLE001
+        save_json(_rate_state_path(), times, indent=None)
+    except OSError as exc:
         print(f"[rate] не сохранил счётчик поисков: {exc}")
 
 
@@ -621,39 +627,22 @@ ID_TO_CODE = {
 }
 
 
-def env(name: str, default: str = "") -> str:
-    return os.getenv(name, default).strip()
+# env() общий (core.env). Раньше здесь была локальная копия с другим
+# поведением на пустом значении: `NOTIFY_EMAIL=` она возвращала как "",
+# а notify_helper — как default. Одна строка .env означала разное.
+_flag = env_flag
 
 
-def _flag(name: str, default: str = "0") -> bool:
-    return env(name, default).lower() not in ("0", "false", "no", "")
-
-
-def flight_strict() -> bool:
-    """FLIGHT_STRICT=1 → индекс/время среди всех рейсов в списке, без запасного выбора."""
-    return _flag("FLIGHT_STRICT", "0")
-
-
-def flight_prefer_time() -> str:
-    return (env("FLIGHT_TIME") or "").strip().replace(".", ":")
-
-
-def flight_want_indexes() -> list[int]:
-    """FLIGHT_INDEX: 1 = [1], 4,3 = [4] затем [3] — как TRAIN_INDEX в railway."""
-    return parse_flight_indexes(env("FLIGHT_INDEX", "1"))
+# flight_strict / flight_prefer_time / flight_want_indexes импортированы из
+# flight_index — это те же FLIGHT_* переменные, что читает api_booking.
+# Держать вторую копию значило рисковать тем, что два бота на одном .env
+# начнут выбирать разные рейсы.
 
 
 def flight_selection_label() -> str:
-    strict = flight_strict()
-    t = flight_prefer_time()
-    idx = format_flight_indexes(flight_want_indexes())
-    mode = "строго (только указанные рейсы)" if strict else "с запасным выбором"
-    if t:
-        scope = "среди всех рейсов" if strict else "среди доступных"
-        return f"{mode}, время={t}, {scope}"
-    if strict:
-        return f"{mode}, index={idx} (только эти позиции в списке)"
-    return f"{mode}, index={idx} (сначала эти, иначе другие прямые с «Выбрать»)"
+    """Режим выбора рейса для стартового лога."""
+    # В браузере запасной рейс — это карточка с активной кнопкой «Выбрать».
+    return _selection_label(fallback_hint="другие прямые с «Выбрать»")
 
 
 def evaluate_wanted_flight_match(page, *, want_indexes: list[int], prefer_time: str, strict: bool) -> dict:
@@ -753,9 +742,7 @@ def _solve_captcha_cnn(image: bytes) -> tuple[str, str]:
         raise RuntimeError(f"CNN ошибка: {exc}") from exc
     if len(code) != CAPTCHA_LEN:
         raise RuntimeError(f"CNN дала не 6 цифр: {code!r}")
-    print(
-        f"{_LIGHT_BLUE}[cnn] ответ: {code} (conf={conf:.2f}){_RESET}"
-    )
+    print(_light_blue(f"[cnn] ответ: {code} (conf={conf:.2f})"))
     if conf < min_confidence():
         print(
             f"[cnn] conf={conf:.2f} < {min_confidence():.2f} "

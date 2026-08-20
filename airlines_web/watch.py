@@ -8,8 +8,6 @@
 
 from __future__ import annotations
 
-import json
-import os
 import re
 import time
 
@@ -37,8 +35,10 @@ ID_TO_CODE = {
 }
 
 
-def env(name: str, default: str = "") -> str:
-    return os.getenv(name, default).strip()
+# env() общий (core.env). Раньше здесь была локальная копия с другим
+# поведением на пустом значении: `NOTIFY_EMAIL=` она возвращала как "",
+# а notify_helper — как default. Одна строка .env означала разное.
+from core.env import env  # noqa: E402
 
 
 def load_dates() -> list[str]:
@@ -46,20 +46,20 @@ def load_dates() -> list[str]:
     return [d.strip() for d in raw.split(",") if d.strip()]
 
 
-from notify_helper import notify  # noqa: E402
+from core.state import load_json, save_json  # noqa: E402
+from core.term import red  # noqa: E402
+from notify_helper import flush_notifications, notify  # noqa: E402
 
 
 def load_state() -> dict:
-    if STATE_FILE.exists():
-        try:
-            return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return {}
-    return {}
+    """Что видели в прошлый раз. Битый файл уезжает в .corrupt, а не молча теряется."""
+    data = load_json(STATE_FILE, {})
+    return data if isinstance(data, dict) else {}
 
 
 def save_state(state: dict) -> None:
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    """Атомарная запись: truncate+write оставлял обрезанный файл после Ctrl-C."""
+    save_json(STATE_FILE, state)
 
 
 def to_site_date(date_str: str) -> str:
@@ -524,7 +524,7 @@ def main() -> int:
                             arrival_city,
                         )
                     except Exception as exc:  # noqa: BLE001
-                        print(f"\033[91m[error] {date}: {exc}\033[0m")
+                        print(red(f"[error] {date}: {exc}"))
                         continue
 
                     key = f"{depart_code}-{arrival_code}-{date}"
@@ -565,4 +565,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        _code = main()
+    finally:
+        # Уведомления уходят в фоновом демон-потоке: без ожидания процесс
+        # завершится раньше SMTP и письмо о найденных местах пропадёт.
+        flush_notifications()
+    raise SystemExit(_code)

@@ -57,8 +57,16 @@ from steps import (
     wait_for_tickets_list,
     wait_search_rate_limit,
 )
-from notify_helper import gmail_configured, notify
+from core.term import green, light_purple, orange, purple, red
+from notify_helper import flush_notifications, gmail_configured, notify
 from passenger_loader import get_passenger_by_id, get_passengers, get_passengers_by_type
+from web_booking import (
+    BOOKINGS_JOURNAL,
+    WebBookingResult,
+    check_booking_guard,
+    compute_web_booking_key,
+    make_guard,
+)
 from dual_coord import (
     DualShutdown,
     bank_browser_wait_sec,
@@ -73,29 +81,15 @@ from dual_coord import (
 
 ROOT = WEB_ROOT
 
-# ANSI-цвета для терминала
-_ORANGE = "\033[38;5;208m"
-_GREEN = "\033[92m"
-_PURPLE = "\033[38;5;135m"
-_LIGHT_PURPLE = "\033[38;5;183m"
-_RED = "\033[91m"
-_RESET = "\033[0m"
+# Палитра общая (core.term). Она же не красит вывод, если он идёт в файл.
+_green, _purple, _light_purple = green, purple, light_purple
+
+# Сколько кругов ожидания ссылки банка допускается ПОСЛЕ клика «Подтвердить».
+# Это именно ожидание, а не повторные submit: второй клик = вторая бронь.
+BOOKING_WAIT_ROUNDS = 3
 
 
-def _green(text: str) -> str:
-    return f"{_GREEN}{text}{_RESET}"
-
-
-def _purple(text: str) -> str:
-    return f"{_PURPLE}{text}{_RESET}"
-
-
-def _light_purple(text: str) -> str:
-    return f"{_LIGHT_PURPLE}{text}{_RESET}"
-
-
-def _red(text: str) -> str:
-    return f"{_RED}{text}{_RESET}"
+_red = red
 
 
 def passenger_notify_label(pax: dict | None = None) -> str:
@@ -932,8 +926,20 @@ def check_confirm_accuracy_checkbox(page) -> dict:
     )
 
 
-def step_fill_passenger(page) -> str:
-    """Заполняет пассажира(ов), жмёт Подтвердить, возвращает URL банка."""
+def step_fill_passenger(
+    page,
+    *,
+    guard=None,
+    booking_key_value: str = "",
+) -> WebBookingResult:
+    """
+    Заполняет пассажира(ов), жмёт «Подтвердить», возвращает результат брони.
+
+    Раньше возвращалась просто строка URL, и пустая строка означала сразу две
+    разные вещи: «форма не собралась, брони нет» и «кнопку нажали, но ссылку не
+    увидели». Вызывающий код не мог их различить и повторял submit в обоих
+    случаях — см. web_booking.py.
+    """
     grouped = get_passengers_by_type()
     n = sum(len(v) for v in grouped.values())
     print(f"\n=== ШАГ 5: заполняю {n} пассажир(а) + Halkbank + галочка ===")
@@ -1044,10 +1050,10 @@ def step_fill_passenger(page) -> str:
     # debug после заполнения
     try:
         (ROOT / ".debug_booking.html").write_text(page.content(), encoding="utf-8")
-    except Exception:
+    except Exception:  # noqa: BLE001 — дамп для отладки, не критичен
         pass
 
-    return click_podtverdit(page)
+    return click_podtverdit(page, guard=guard, booking_key_value=booking_key_value)
 
 
 def _looks_like_bank_url(url: str) -> bool:
@@ -1155,10 +1161,35 @@ def wait_for_bank_url(page, *, timeout_sec: int = 90) -> str:
     return final
 
 
-def click_podtverdit(page) -> str:
+def _save_last_bank_url(bank_url: str) -> None:
+    try:
+        (ROOT / ".last_bank_url.txt").write_text(bank_url + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def resume_wait_bank_url(page, *, timeout_sec: int = 60) -> str:
+    """
+    Продолжить ждать ссылку банка БЕЗ повторного «Подтвердить».
+
+    Это единственный безопасный способ восстановиться после того, как клик уже
+    состоялся: сама по себе ссылка могла просто задержаться, а второй submit
+    завёл бы вторую настоящую бронь.
+    """
+    print("[booking] клик уже был — жду ссылку банка, повторный submit запрещён")
+    bank_url = wait_for_bank_url(page, timeout_sec=timeout_sec)
+    if bank_url:
+        _save_last_bank_url(bank_url)
+    return bank_url
+
+
+def click_podtverdit(page, *, guard=None, booking_key_value: str = "") -> WebBookingResult:
     """
     Жмёт «Подтвердить» и ждёт URL банка.
-    Возвращает URL страницы оплаты.
+
+    Точка невозврата всего скрипта. До клика ошибки безопасны — брони нет.
+    После клика любая неясность означает «бронь могла быть создана», и результат
+    помечается unknown: повторять submit нельзя.
     """
     print("\n=== ШАГ 6: жму «Подтвердить» ===")
 
@@ -1187,12 +1218,22 @@ def click_podtverdit(page) -> str:
 
     btn = page.locator("#booking-form-submit, button:has-text('Подтвердить')")
     if btn.count() == 0:
-        raise RuntimeError("Кнопка «Подтвердить» не найдена")
+        # Кнопки нет — клика не было, брони нет. Достоверная неудача.
+        return WebBookingResult(
+            ok=False,
+            booking_key=booking_key_value,
+            error="кнопка «Подтвердить» не найдена",
+        )
 
     try:
         btn.first.scroll_into_view_if_needed(timeout=3000)
-    except Exception:
+    except Exception:  # noqa: BLE001 — прокрутка не обязательна для клика
         pass
+
+    # Запись pending уходит на диск ДО клика: если процесс умрёт сразу после
+    # него, следующий запуск увидит незакрытую попытку и не станет бронировать.
+    if guard is not None and booking_key_value:
+        guard.begin(booking_key_value)
 
     print("[booking] кликаю #booking-form-submit «Подтвердить»…")
     try:
@@ -1208,12 +1249,31 @@ def click_podtverdit(page) -> str:
             }"""
         )
 
-    bank_url = wait_for_bank_url(page, timeout_sec=90)
     try:
-        (ROOT / ".last_bank_url.txt").write_text(bank_url + "\n", encoding="utf-8")
-    except Exception:
-        pass
-    return bank_url
+        bank_url = wait_for_bank_url(page, timeout_sec=90)
+    except Exception as exc:  # noqa: BLE001
+        # Клик состоялся, ждать не смогли — состояние брони неизвестно.
+        detail = f"ожидание банка сорвалось: {type(exc).__name__}: {exc}"
+        if guard is not None and booking_key_value:
+            guard.mark_unknown(booking_key_value, detail)
+        return WebBookingResult(
+            ok=False, unknown=True, booking_key=booking_key_value, error=detail
+        )
+
+    if bank_url:
+        _save_last_bank_url(bank_url)
+
+    if _looks_like_bank_url(bank_url):
+        if guard is not None and booking_key_value:
+            guard.settle(booking_key_value, ok=True, form_url=bank_url)
+        return WebBookingResult(ok=True, bank_url=bank_url, booking_key=booking_key_value)
+
+    detail = f"ссылку банка не получил за 90с | url={bank_url or page.url}"
+    if guard is not None and booking_key_value:
+        guard.mark_unknown(booking_key_value, detail)
+    return WebBookingResult(
+        ok=False, unknown=True, bank_url=bank_url, booking_key=booking_key_value, error=detail
+    )
 
 
 def recover_empty_route_immediately(page) -> bool:
@@ -1289,15 +1349,20 @@ def prepare_home_route(page) -> str:
 
 
 def next_search_slot() -> tuple[dt.datetime, dt.datetime, float]:
-    """Сейчас, ближайший слот BOOK_SEARCH_AT_SEC и секунд до него (один вызов now)."""
-    _dt = dt
+    """
+    Сейчас, ближайший слот BOOK_SEARCH_AT_SEC и секунд до него (один вызов now).
 
+    Микросекунды учитываются. Раньше `now.replace(second=at_sec, microsecond=0)`
+    обнулял их у ЦЕЛИ, но не у `now`, поэтому в 12:00:29.700 расчёт «до :30»
+    давал 0.3 с — верно, а в 12:00:30.700 сразу прыгал на следующую минуту,
+    хотя до конца слота ещё оставалось время. Ошибка равномерна на [0, 1) с.
+    """
     at_sec = _search_at_second()
-    now = _dt.datetime.now()
+    now = dt.datetime.now()
     nxt = now.replace(second=at_sec, microsecond=0)
     if now >= nxt:
-        nxt += _dt.timedelta(minutes=1)
-    until = max(0.05, (nxt - now).total_seconds())
+        nxt += dt.timedelta(minutes=1)
+    until = max(0.0, (nxt - now).total_seconds())
     return now, nxt, until
 
 
@@ -1411,29 +1476,28 @@ def wait_until_next_minute(page=None) -> None:
             f"(через {wait_sec:.1f} сек){jitter_note} | слот {slot_label}"
         )
 
-    end = time.time() + wait_sec
+    # Ждём по монотонным часам: перевод времени или скачок NTP не должен
+    # сдвигать слот. Настенное время используется только для печати.
+    end = time.monotonic() + wait_sec
     account = env("ACCOUNT_NAME") or env("CHROME_PROFILE") or ""
-    while time.time() < end:
-        if dual_sync_enabled():
-            try:
-                check_dual_stop(self_source=account)
-            except DualShutdown:
-                raise
-        left = end - time.time()
+    while True:
+        left = end - time.monotonic()
         if left <= 0:
             break
+        if dual_sync_enabled():
+            # Второй аккаунт мог уже дойти до банка — тогда ждать слот незачем.
+            check_dual_stop(self_source=account)
         # ближе к слоту — чаще тикаем, чтобы нажать поиск точнее
         chunk = 0.05 if left < 1.0 else min(0.4, left)
         if page is not None:
             try:
                 page.wait_for_timeout(int(chunk * 1000))
-            except Exception:
+            except Exception:  # noqa: BLE001 — страница закрыта, досыпаем сами
                 time.sleep(chunk)
         else:
             time.sleep(chunk)
 
-    import datetime as _dt2
-    fired = _dt2.datetime.now()
+    fired = dt.datetime.now()
     if jitter != 0.0:
         print(
             f"[wait] слот! {fired.strftime('%H:%M:%S.%f')[:-3]} "
@@ -1441,6 +1505,116 @@ def wait_until_next_minute(page=None) -> None:
         )
     else:
         print(f"[wait] слот! {fired.strftime('%H:%M:%S')} — сразу поиск")
+
+
+def recover_to_search_form(page, reason: str, *, force_home: bool = False) -> bool:
+    """
+    Вернуть браузер к готовой форме поиска после сбоя.
+
+    Один и тот же блок из четырёх шагов (быстрое восстановление полей → пауза →
+    goto на главную → заполнение маршрута) был скопирован в `main()` четыре раза,
+    с расхождениями: где-то `fill_route_now` вызывался только при пустой форме,
+    где-то безусловно, где-то после ошибки навигации ждали 5 секунд, а где-то нет.
+
+    force_home=True — заполнять маршрут даже если форма выглядит готовой
+    (после срыва брони странице доверять нельзя).
+
+    Возвращает True, если форма готова к новому поиску.
+    """
+    from steps import goto_retry
+
+    try:
+        recover_empty_route_immediately(page)
+    except Exception as exc:  # noqa: BLE001 — быстрый путь, не обязателен
+        print(f"[warn] recover: {exc}")
+
+    retry_pause(page, reason)
+
+    try:
+        goto_retry(page, f"{BASE}/{LANG}", timeout_ms=90000, attempts=5, label="route")
+        if force_home or not route_ready(page):
+            fill_route_now(page, force_home=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] {reason}: {exc}")
+        # Сайт или сеть недоступны — дать им время, следующий круг попробует снова.
+        page.wait_for_timeout(5000)
+        return False
+    return True
+
+
+def report_bank_url(page, *, bank_url: str, route_line: str, account_tag: str) -> None:
+    """
+    Финал успешного сценария: письмо со ссылкой оплаты и удержание окна Chrome.
+
+    Письмо не отправляется, если ссылку уже получил второй аккаунт этой же брони
+    (DUAL_STOP_ON_BANK) — иначе человек получал два письма про одну бронь.
+    """
+    stop_info = peek_dual_stop() if dual_sync_enabled() else None
+    if stop_info and (stop_info.get("source") or "") != account_tag:
+        print(
+            f"[dual] {account_tag}: банк уже у {stop_info.get('source')} — "
+            "закрываю Chrome без повторного письма"
+        )
+        return
+
+    if not bank_url:
+        return
+
+    if not _looks_like_bank_url(bank_url):
+        print(f"[warn] URL не похож на банк: {bank_url}")
+        return
+
+    try:
+        bank_pax = get_passenger_by_id()
+    except Exception:  # noqa: BLE001 — имя в письме приятно, но не обязательно
+        bank_pax = None
+
+    bank_msg = notify_bank_body(route_line, bank_url, bank_pax)
+    notify(f"T5: страница банка — {route_line}", bank_msg)
+    print(_green("\n=== ГОТОВО: URL БАНКА ==="))
+    print(_green(bank_msg.replace("\n\n", "\n")))
+
+    if not stop_info:
+        request_dual_stop(account_tag, bank_url=bank_url)
+
+    # Окно оставляем открытым: оплату человек делает руками на странице банка.
+    hold = bank_browser_wait_sec()
+    if hold > 0:
+        print(f"[main] Chrome откроется ещё {hold:.0f}с, затем закроется…")
+        wait_interruptible(page, hold, self_source=account_tag)
+    else:
+        print("[main] закрываю Chrome…")
+
+
+def _report_unknown_booking(
+    result: WebBookingResult,
+    *,
+    route_line: str,
+    account_tag: str,
+) -> int:
+    """
+    Остановиться и позвать человека: состояние брони неизвестно.
+
+    Возвращает код 2 — отличается и от успеха (0), и от обычной ошибки (1),
+    чтобы обёртки (run_dual, cron) могли отличить «нужна ручная проверка».
+    """
+    text = "\n".join(
+        [
+            f"Аккаунт {account_tag}: {route_line}",
+            "«Подтвердить» нажали, но ссылку банка получить не удалось.",
+            "Бронь МОГЛА быть создана.",
+            "",
+            result.error or "подробностей нет",
+            "",
+            "Проверь брони в личном кабинете T5 ПЕРЕД повторным запуском.",
+            f"Журнал попыток: {BOOKINGS_JOURNAL}",
+            "Снять блокировку после проверки: --force-rebook",
+        ]
+    )
+    print(_red("\n[book] СТОП — результат брони неизвестен."))
+    print(_red(text))
+    notify("T5: бронь под вопросом", text)
+    return 2
 
 
 def load_book_env() -> Path:
@@ -1475,6 +1649,9 @@ def load_book_env() -> Path:
     apply_account_overlay(account)
 
     print(f"[env] бронь: {booking_summary()}")
+    # --force-rebook пробрасываем через env: main() читает его при проверке журнала.
+    if cli.get("force_rebook"):
+        os.environ["BOOK_FORCE_REBOOK"] = "1"
     return book_path
 
 
@@ -1508,7 +1685,7 @@ def main() -> int:
         launch_browser,
         wipe_profile_dir,
     )
-    from steps import NoFlightsAvailable, TicketsSearchTimeout, fill_route_now, route_fields_empty
+    from steps import NoFlightsAvailable, TicketsSearchTimeout, route_fields_empty
 
     def _flag(name: str, default: str = "1") -> bool:
         return env(name, default) not in ("0", "false", "no")
@@ -1516,6 +1693,19 @@ def main() -> int:
     attempt = 0
     bank_url = ""
     account_tag = env("ACCOUNT_NAME") or env("CHROME_PROFILE") or "acc1"
+
+    # Журнал броней проверяем ДО запуска Chrome: если прошлая попытка осталась
+    # незакрытой, бронировать повторно нельзя, и открывать браузер незачем.
+    guard = make_guard()
+    blocked = check_booking_guard(
+        guard,
+        force_rebook=_flag("BOOK_FORCE_REBOOK", "0"),
+        account_tag=account_tag,
+    )
+    if blocked:
+        print(_red(blocked))
+        return 2
+
     clear_dual_stop()
     if dual_sync_enabled():
         print(
@@ -1544,6 +1734,9 @@ def main() -> int:
             booking_lock = False
             booking_fail_count = 0
             login_fail_streak = 0
+            # Заполняется, если клик «Подтвердить» состоялся, а ссылки банка нет:
+            # бронь могла быть создана, и цикл обязан остановиться.
+            unknown_booking: WebBookingResult | None = None
 
             def _handle_login_failure(exc: LoginFailed, *, after_clear: bool = False) -> None:
                 nonlocal login_fail_streak, align_to_slot
@@ -1562,26 +1755,47 @@ def main() -> int:
                     raise LoginFailed(str(retry_exc)) from retry_exc
                 align_to_slot = True
 
-            try:
-                step_login(page)
-                login_fail_streak = 0
-            except AccountBlocked as exc:
-                msg = f"Аккаунт {account_tag}:\n{exc}"
-                print(_red(f"[login] блокировка: {exc}"))
-                notify("T5: аккаунт заблокирован", msg)
-                return
-            except LoginFailed as exc:
+            def _login_step(*, after_clear: bool = False) -> str:
+                """
+                Логин с повтором. Возвращает ok | blocked | failed.
+
+                Один и тот же блок из шести строк (печать, письмо, выход) был
+                скопирован в трёх местах по два раза каждый — на первичный вход,
+                на вход после очистки cookies и на LoginFailed в цикле. Различия
+                между копиями были только в тексте и в том, что делать дальше;
+                решение «дальше» осталось за вызывающим, всё остальное здесь.
+                """
                 try:
-                    _handle_login_failure(exc)
+                    step_login(page)
+                    return "ok"
+                except AccountBlocked as exc:
+                    print(_red(f"[login] блокировка: {exc}"))
+                    notify("T5: аккаунт заблокирован", f"Аккаунт {account_tag}:\n{exc}")
+                    return "blocked"
+                except LoginFailed as exc:
+                    # Python удаляет имя exc при выходе из except — сохраняем сами.
+                    first_failure = exc
+
+                # Первая попытка не прошла — пауза по серии неудач и второй заход.
+                try:
+                    _handle_login_failure(first_failure, after_clear=after_clear)
+                    return "ok"
                 except AccountBlocked as block_exc:
-                    msg = f"Аккаунт {account_tag}:\n{block_exc}"
                     print(_red(f"[login] блокировка: {block_exc}"))
-                    notify("T5: аккаунт заблокирован", msg)
-                    return
+                    notify("T5: аккаунт заблокирован", f"Аккаунт {account_tag}:\n{block_exc}")
+                    return "blocked"
                 except LoginFailed as exc2:
-                    print(_red(f"[login] не удалось войти: {exc2}"))
+                    tag = " после очистки" if after_clear else ""
+                    print(_red(f"[login] не удалось войти{tag}: {exc2}"))
                     notify("T5: ошибка входа", f"Аккаунт {account_tag}:\n{exc2}")
-                    return
+                    return "failed"
+
+            first_login = _login_step()
+            if first_login != "ok":
+                # Без входа делать нечего. Код 1 — раньше здесь был голый return,
+                # то есть процесс завершался с кодом 0 «успех» при блокировке.
+                return 1
+            login_fail_streak = 0
 
             last_browser_clear = time.time()
 
@@ -1610,9 +1824,23 @@ def main() -> int:
                     )
                 )
 
+            def _booking_key(date_str: str, time_str: str) -> str:
+                """Ключ брони для журнала: рейс + пассажиры, стабильный между запусками."""
+                try:
+                    passengers = get_passengers(verbose=False)
+                except Exception:  # noqa: BLE001 — без списка ключ всё равно нужен
+                    passengers = []
+                return compute_web_booking_key(
+                    depart=dep,
+                    arrival=arr,
+                    flight_date=date_str or "",
+                    flight_time=time_str or "",
+                    passengers=passengers,
+                )
+
             while True:
                 attempt += 1
-                print(f"\n{_ORANGE}======== ПОПЫТКА #{attempt} ========{_RESET}")
+                print("\n" + orange(f"======== ПОПЫТКА #{attempt} ========"))
 
                 if dual_sync_enabled():
                     try:
@@ -1633,26 +1861,13 @@ def main() -> int:
                         except Exception as exc:  # noqa: BLE001
                             print(f"[warn] очистка сессии: {exc}")
                         print("[browser] новая сессия — снова логин и маршрут")
-                        try:
-                            step_login(page)
-                            login_fail_streak = 0
-                        except AccountBlocked as exc:
-                            msg = f"Аккаунт {account_tag}:\n{exc}"
-                            print(_red(f"[login] блокировка: {exc}"))
-                            notify("T5: аккаунт заблокирован", msg)
+                        status = _login_step(after_clear=True)
+                        if status == "blocked":
                             break
-                        except LoginFailed as exc:
-                            try:
-                                _handle_login_failure(exc, after_clear=True)
-                            except AccountBlocked as block_exc:
-                                msg = f"Аккаунт {account_tag}:\n{block_exc}"
-                                print(_red(f"[login] блокировка: {block_exc}"))
-                                notify("T5: аккаунт заблокирован", msg)
-                                break
-                            except LoginFailed as exc2:
-                                print(_red(f"[login] не удалось войти после очистки: {exc2}"))
-                                align_to_slot = True
-                                continue
+                        if status == "failed":
+                            align_to_slot = True
+                            continue
+                        login_fail_streak = 0
                         try:
                             page.goto(f"{BASE}/{LANG}", wait_until="domcontentloaded", timeout=60000)
                         except Exception:
@@ -1699,21 +1914,32 @@ def main() -> int:
                     route_line = route_notify_text(flight_date, flight_time)
                     try:
                         current_pax = get_passenger_by_id()
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — имя в письме не критично
                         current_pax = None
                     fill_msg = notify_flight_selected_body(
                         picked or {}, flight_date, flight_time, current_pax
                     )
                     print(f"[main] {fill_msg.replace(chr(10), ' | ')}")
                     notify(f"T5: есть рейс — {route_line}", fill_msg)
-                    bank_url = step_fill_passenger(page)
+
+                    book_result = step_fill_passenger(
+                        page,
+                        guard=guard,
+                        booking_key_value=_booking_key(flight_date, flight_time),
+                    )
                     if _on_booking_page():
                         booking_lock = True
-                    if not bank_url or not _looks_like_bank_url(bank_url):
-                        raise RuntimeError(
-                            f"Не получил ссылку банка после брони | url={bank_url or page.url}"
-                        )
-                    break
+
+                    if book_result.ok:
+                        bank_url = book_result.bank_url
+                        break
+                    if book_result.unknown:
+                        # Клик по «Подтвердить» состоялся. Второй submit создаст
+                        # вторую настоящую бронь — останавливаемся и зовём человека.
+                        unknown_booking = book_result
+                        break
+                    # Клика не было — обычная ошибка цикла, можно пробовать снова.
+                    raise RuntimeError(book_result.error)
 
                 except DualShutdown as ds:
                     print(
@@ -1723,23 +1949,16 @@ def main() -> int:
                     break
 
                 except AccountBlocked as exc:
-                    msg = f"Аккаунт {account_tag}:\n{exc}"
                     print(_red(f"[login] блокировка: {exc}"))
-                    notify("T5: аккаунт заблокирован", msg)
+                    notify("T5: аккаунт заблокирован", f"Аккаунт {account_tag}:\n{exc}")
                     break
 
-                except LoginFailed as exc:
-                    try:
-                        _handle_login_failure(exc)
-                    except AccountBlocked as block_exc:
-                        msg = f"Аккаунт {account_tag}:\n{block_exc}"
-                        print(_red(f"[login] блокировка: {block_exc}"))
-                        notify("T5: аккаунт заблокирован", msg)
+                except LoginFailed:
+                    # Сессия отвалилась посреди цикла — перелогиниться и начать заново.
+                    if _login_step() == "blocked":
                         break
-                    except LoginFailed as exc2:
-                        print(_red(f"[login] {exc2}"))
-                        align_to_slot = True
-                        continue
+                    align_to_slot = True
+                    continue
 
                 except NoFlightsAvailable as exc:
                     booking_lock = False
@@ -1756,74 +1975,54 @@ def main() -> int:
                     print(_light_purple(f"[tickets] {exc}"))
                     print("[main] выдача зависла — refresh и новый поиск…")
                     align_to_slot = False
-                    try:
-                        recover_empty_route_immediately(page)
-                    except Exception as rec_exc:  # noqa: BLE001
-                        print(f"[warn] recover: {rec_exc}")
-                    retry_pause(page, "после зависшей выдачи")
-                    try:
-                        from steps import goto_retry
-
-                        goto_retry(
-                            page,
-                            f"{BASE}/{LANG}",
-                            timeout_ms=90000,
-                            attempts=5,
-                            label="route",
-                        )
-                        if not route_ready(page):
-                            fill_route_now(page, force_home=True)
-                    except Exception as nav_exc:  # noqa: BLE001
-                        print(f"[warn] refresh после зависшей выдачи: {nav_exc}")
-                        page.wait_for_timeout(5000)
+                    recover_to_search_form(page, "после зависшей выдачи")
                     continue
 
                 except Exception as exc:  # noqa: BLE001
                     msg = str(exc)
                     print(_red(f"[error] {msg}"), file=sys.stderr)
 
-                    # На /flights/booking — НЕ refresh, дожимаем ссылку банка
+                    # На /flights/booking — НЕ refresh и НЕ повторный submit.
+                    #
+                    # Раньше здесь вызывался step_fill_passenger() ещё до трёх раз,
+                    # а потом цикл шёл на новый поиск и новую бронь. Каждый такой
+                    # вызов заново жал «Подтвердить», то есть заводил отдельную
+                    # настоящую бронь на тех же пассажиров. Теперь допустимо
+                    # только продолжать ждать ссылку на той же странице.
                     if booking_lock or _on_booking_page():
                         booking_lock = True
                         booking_fail_count += 1
                         print(
                             f"[main] на booking: ошибка #{booking_fail_count} — "
-                            "без refresh, снова заполняю и жду ссылку банка"
+                            "жду ссылку банка без повторного «Подтвердить»"
                         )
                         try:
-                            bank_url = step_fill_passenger(page)
-                            if bank_url and _looks_like_bank_url(bank_url):
-                                break
+                            late_url = resume_wait_bank_url(page, timeout_sec=60)
                         except Exception as retry_exc:  # noqa: BLE001
-                            print(_red(f"[error] повтор брони: {retry_exc}"), file=sys.stderr)
+                            print(_red(f"[error] ожидание банка: {retry_exc}"), file=sys.stderr)
+                            late_url = ""
 
-                        if booking_fail_count >= 3:
-                            print(
-                                "[main] ссылку банка не получил после 3 попыток — "
-                                "разрешаю refresh и новый поиск"
+                        if late_url and _looks_like_bank_url(late_url):
+                            bank_url = late_url
+                            key = _booking_key(flight_date, flight_time)
+                            guard.settle(key, ok=True, form_url=bank_url)
+                            break
+
+                        if booking_fail_count >= BOOKING_WAIT_ROUNDS:
+                            # Клик был, ссылки нет. Бронь могла быть создана —
+                            # искать заново нельзя, это второй счёт в банке.
+                            key = _booking_key(flight_date, flight_time)
+                            guard.mark_unknown(
+                                key,
+                                f"ссылку банка не получили за {BOOKING_WAIT_ROUNDS} кругов: {msg}",
                             )
-                            booking_lock = False
-                            booking_fail_count = 0
-                            align_to_slot = False
-                            try:
-                                recover_empty_route_immediately(page)
-                            except Exception as rec_exc:  # noqa: BLE001
-                                print(f"[warn] recover: {rec_exc}")
-                            retry_pause(page, "после срыва брони")
-                            try:
-                                from steps import goto_retry
-
-                                goto_retry(
-                                    page,
-                                    f"{BASE}/{LANG}",
-                                    timeout_ms=90000,
-                                    attempts=5,
-                                    label="route",
-                                )
-                                fill_route_now(page, force_home=True)
-                            except Exception as nav_exc:  # noqa: BLE001
-                                print(f"[warn] после срыва брони: {nav_exc}")
-                            continue
+                            unknown_booking = WebBookingResult(
+                                ok=False,
+                                unknown=True,
+                                booking_key=key,
+                                error=f"ссылку банка не получили: {msg}",
+                            )
+                            break
                         page.wait_for_timeout(1500)
                         continue
 
@@ -1850,100 +2049,56 @@ def main() -> int:
                                 pass
                             if appeared:
                                 print("[main] «Выбрать» появилась за 10с — выбираю без refresh")
+                                late_result: WebBookingResult | None = None
                                 try:
                                     picked = step_select_first_flight(page) or {}
                                     flight_time = (picked.get("time") or "").strip() or flight_time
                                     if _on_booking_page():
                                         booking_lock = True
-                                    bank_url = step_fill_passenger(page)
-                                    if bank_url and _looks_like_bank_url(bank_url):
-                                        break
+                                    late_result = step_fill_passenger(
+                                        page,
+                                        guard=guard,
+                                        booking_key_value=_booking_key(flight_date, flight_time),
+                                    )
                                 except Exception as late_exc:  # noqa: BLE001
                                     print(_red(f"[error] поздний выбор: {late_exc}"), file=sys.stderr)
+
+                                if late_result is not None:
+                                    if late_result.ok:
+                                        bank_url = late_result.bank_url
+                                        break
+                                    if late_result.unknown:
+                                        # Клик был — новый поиск завёл бы вторую бронь.
+                                        unknown_booking = late_result
+                                        break
                             print("[main] за 10с не удалось взять рейс — делаю refresh и новый поиск")
                         else:
                             print("[main] пустая выдача после 16с — сразу refresh…")
-                        try:
-                            recover_empty_route_immediately(page)
-                        except Exception as rec_exc:  # noqa: BLE001
-                            print(f"[warn] recover: {rec_exc}")
-                        retry_pause(page, "после пустой выдачи")
-                        try:
-                            from steps import goto_retry
-
-                            goto_retry(
-                                page,
-                                f"{BASE}/{LANG}",
-                                timeout_ms=90000,
-                                attempts=5,
-                                label="route",
-                            )
-                            if not route_ready(page):
-                                fill_route_now(page, force_home=True)
-                        except Exception as nav_exc:  # noqa: BLE001
-                            print(f"[warn] refresh после пустой выдачи: {nav_exc}")
-                            page.wait_for_timeout(5000)
+                        recover_to_search_form(page, "после пустой выдачи")
                         continue
 
                     # Прочие ошибки до booking — сразу заново
                     align_to_slot = False
                     booking_lock = False
-                    try:
-                        recover_empty_route_immediately(page)
-                    except Exception as rec_exc:  # noqa: BLE001
-                        print(f"[warn] recover: {rec_exc}")
-                    retry_pause(page, "после ошибки")
-                    try:
-                        if "/flights/" in (page.url or "") or page.locator("#internal-depart-port").count() == 0:
-                            from steps import goto_retry
-
-                            goto_retry(
-                                page,
-                                f"{BASE}/{LANG}",
-                                timeout_ms=90000,
-                                attempts=5,
-                                label="route",
-                            )
-                    except Exception as nav_exc:  # noqa: BLE001
-                        print(f"[warn] сеть/сайт недоступны, повторю: {nav_exc}")
-                        page.wait_for_timeout(5000)
-                        continue
-                    try:
-                        if not route_ready(page):
-                            fill_route_now(page, force_home=True)
-                    except Exception as fill_exc:  # noqa: BLE001
-                        print(f"[warn] маршрут не заполнен (сеть?), повторю: {fill_exc}")
-                        page.wait_for_timeout(5000)
-                        continue
+                    recover_to_search_form(page, "после ошибки")
                     print("[main] сразу новая попытка поиска")
                     continue
 
-            stop_info = peek_dual_stop() if dual_sync_enabled() else None
-            if stop_info and (stop_info.get("source") or "") != account_tag:
-                print(
-                    f"[dual] {account_tag}: банк уже у {stop_info.get('source')} — "
-                    "закрываю Chrome без повторного письма"
+            if unknown_booking is not None:
+                # «Подтвердить» нажали, ссылки банка нет. Бронь могла появиться —
+                # молча начинать новый цикл нельзя, это второй счёт в банке.
+                return _report_unknown_booking(
+                    unknown_booking,
+                    route_line=route_notify_text(flight_date, flight_time),
+                    account_tag=account_tag,
                 )
-            elif bank_url and _looks_like_bank_url(bank_url):
-                route_line = route_notify_text(flight_date, flight_time)
-                try:
-                    bank_pax = get_passenger_by_id()
-                except Exception:
-                    bank_pax = None
-                bank_msg = notify_bank_body(route_line, bank_url, bank_pax)
-                notify(f"T5: страница банка — {route_line}", bank_msg)
-                print(_green("\n=== ГОТОВО: URL БАНКА ==="))
-                print(_green(bank_msg.replace("\n\n", "\n")))
-                if not stop_info:
-                    request_dual_stop(account_tag, bank_url=bank_url)
-                hold = bank_browser_wait_sec()
-                if hold > 0:
-                    print(f"[main] Chrome откроется ещё {hold:.0f}с, затем закроется…")
-                    wait_interruptible(page, hold, self_source=account_tag)
-                else:
-                    print("[main] закрываю Chrome…")
-            elif bank_url:
-                print(f"[warn] URL не похож на банк: {bank_url}")
+
+            report_bank_url(
+                page,
+                bank_url=bank_url,
+                route_line=route_notify_text(flight_date, flight_time),
+                account_tag=account_tag,
+            )
         except DualShutdown as ds:
             print(
                 f"[dual] {account_tag}: остановка — другой аккаунт завершил "
@@ -1965,4 +2120,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        _code = main()
+    finally:
+        # Письма уходят в фоновом демон-потоке. Без этого ожидания процесс
+        # завершался раньше SMTP, и письмо со ссылкой банка молча терялось —
+        # ровно то письмо, ради которого всё и запускалось.
+        flush_notifications()
+    raise SystemExit(_code)

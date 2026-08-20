@@ -17,7 +17,7 @@
 
 Запуск:
     python run_tests.py              # все тесты репозитория
-    python run_tests.py railway      # только папка railway
+    python run_tests.py railway-api  # только один модуль
 """
 
 from __future__ import annotations
@@ -36,8 +36,25 @@ from typing import Any, Callable, Iterator
 
 REPO_ROOT = Path(__file__).resolve().parent
 
-# Папки, где вообще имеет смысл искать test_*.py.
-TEST_DIRS = ("railway", "airlines_api", "airlines_web", "chapar", "core")
+# Папки, которые заведомо не содержат тестов проекта.
+SKIP_DIRS = frozenset({".git", ".venv", "__pycache__", "profiles", "node_modules"})
+
+
+def test_dirs() -> list[Path]:
+    """
+    Папки верхнего уровня, где есть test_*.py — ищем, а не перечисляем.
+
+    Раньше список был захардкожен. Стоило переименовать папку модуля — и её
+    тесты просто переставали запускаться, молча: отчёт оставался зелёным,
+    только тестов в нём становилось меньше.
+    """
+    found = [REPO_ROOT] if any(REPO_ROOT.glob("test_*.py")) else []
+    for entry in sorted(REPO_ROOT.iterdir()):
+        if not entry.is_dir() or entry.name in SKIP_DIRS or entry.name.startswith("."):
+            continue
+        if any(entry.glob("test_*.py")):
+            found.append(entry)
+    return found
 
 
 # --------------------------------------------------------------------------
@@ -355,9 +372,7 @@ def _run_module(path: Path) -> tuple[int, int, list[str]]:
 
 
 def _collect(targets: list[str]) -> list[Path]:
-    roots = [REPO_ROOT / t for t in targets] if targets else [
-        REPO_ROOT / d for d in TEST_DIRS
-    ]
+    roots = [REPO_ROOT / t for t in targets] if targets else test_dirs()
     files: list[Path] = []
     for root in roots:
         if root.is_file():
@@ -368,11 +383,20 @@ def _collect(targets: list[str]) -> list[Path]:
 
 
 def main(argv: list[str]) -> int:
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+
+    # Отчёт содержит кириллицу — на русской Windows консоль в cp1251 и без этого
+    # превращает его в мусор (а сообщение об упавшем тесте — в UnicodeEncodeError).
+    from core.console import enable_utf8_output  # noqa: PLC0415
+
+    enable_utf8_output()
+
     if importlib.util.find_spec("pytest") is not None:
         # Настоящий pytest на месте — он и должен прогонять тесты.
         import pytest  # noqa: PLC0415
 
-        return int(pytest.main(argv or [str(REPO_ROOT / d) for d in TEST_DIRS if (REPO_ROOT / d).is_dir()]))
+        return int(pytest.main(argv or [str(d) for d in test_dirs()]))
 
     print("[tests] pytest не установлен — мини-раннер (pip install pytest для полной версии)")
     sys.modules["pytest"] = _build_pytest_stub()

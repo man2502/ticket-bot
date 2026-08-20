@@ -5,10 +5,17 @@ from __future__ import annotations
 import os
 import random
 import secrets
+import sys
 import time
 from pathlib import Path
 
+REPO_ROOT_PATH = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT_PATH) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT_PATH))
+
 from dotenv import load_dotenv
+
+from core.env import env
 
 IOS_UA_VERSIONS = ("26.5", "26.4", "26.2", "26.1")
 IPHONE_UA_MODELS = (
@@ -36,8 +43,7 @@ LEGACY_LOCAL_ENV = REPO_ROOT / ".env.local"
 _loaded_env_path: Path | None = None
 
 
-def env(name: str, default: str = "") -> str:
-    return (os.getenv(name) or default).strip()
+# Реализация общая — core.env (там же описано, почему пустое значение = default).
 
 
 def load_api_env(path: Path | str | None = None) -> Path:

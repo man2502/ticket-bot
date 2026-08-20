@@ -51,18 +51,38 @@ def passengers_file_path() -> Path:
 
 
 def load_passengers_list(path: Path | None = None) -> list[dict]:
+    """
+    Прочитать passengers.json.
+
+    Ошибки настройки поднимаются как SystemExit с готовой командой: раньше
+    отсутствие файла давало стену traceback на пол-экрана, хотя вся проблема
+    в одном пропущенном шаге установки.
+    """
     path = path or passengers_file_path()
     if not path.exists():
-        raise FileNotFoundError(f"Нет файла пассажиров: {path}")
-    raw = json.loads(path.read_text(encoding="utf-8"))
+        example = ROOT / "passengers.example.json"
+        raise SystemExit(
+            f"Нет файла пассажиров: {path}\n"
+            f"Создай его из примера:\n"
+            f"  Windows:      copy {example.name} {path.name}\n"
+            f"  macOS/Linux:  cp {example.name} {path.name}"
+        )
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{path.name}: битый JSON — {exc}") from exc
+
     if isinstance(raw, dict) and "passengers" in raw:
         items = raw["passengers"]
     elif isinstance(raw, list):
         items = raw
     else:
-        raise ValueError("passengers.json: нужен список или {\"passengers\": [...]}")
+        raise SystemExit(f'{path.name}: нужен список или {{"passengers": [...]}}')
     if not isinstance(items, list):
-        raise ValueError("passengers: ожидается список")
+        raise SystemExit(f"{path.name}: passengers — ожидается список")
+    if not items:
+        raise SystemExit(f"{path.name}: список пассажиров пуст")
     return items
 
 
