@@ -1,0 +1,171 @@
+"""HTTP-транспорт для API Turkmenistan Airlines (то же, что использует iOS-приложение).
+
+Раньше каждый из трёх модулей (`api_check`, `api_auth`, а также `api_booking`
+через переданный колбэк) открывал соединение сам через `urllib.request.urlopen`
+с таймаутом 100 секунд. Отсюда три проблемы:
+
+  * новый TCP+TLS на КАЖДЫЙ шаг цепочки (customers/info → captcha/finding →
+    GetAirAvailability) — три handshake подряд в момент, когда счёт идёт на
+    десятки миллисекунд;
+  * один общий таймаут: подвисший коннект и медленный ответ неразличимы,
+    и оба съедали до 100 секунд, то есть полтора слота проверки;
+  * `urlopen` не различает «запрос не ушёл» и «ответ потерян». Для поиска это
+    неважно, для `CreateBooking` — принципиально: повтор создаёт вторую бронь.
+
+Здесь всё это решает общий `core.http.HttpClient`. Публичная функция
+`api_request` намеренно сохраняет старую сигнатуру и старый кортеж
+`(status, body, retry_after)`, чтобы вызывающий код не переписывать.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from core.http import HttpClient, RequestFailed, Response, ResultUnknown  # noqa: E402
+from api_env import current_ios_user_agent, env  # noqa: E402
+
+__all__ = [
+    "api_request",
+    "api_call",
+    "base_url",
+    "get_client",
+    "reset_client",
+    "warmup_connection",
+    "RequestFailed",
+    "ResultUnknown",
+    "Response",
+]
+
+DEFAULT_BASE_URL = "https://turkmenistanairlines.tm/api/v1"
+
+
+def base_url() -> str:
+    """Боевой хост по умолчанию; API_BASE_URL позволяет подменить на стенд."""
+    return (env("API_BASE_URL", DEFAULT_BASE_URL) or DEFAULT_BASE_URL).rstrip("/")
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = env(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        print(f"[warn] {name}={raw!r} — не число, беру {default}")
+        return default
+    return value if value > 0 else default
+
+
+_client: HttpClient | None = None
+_client_base: str = ""
+
+
+def get_client() -> HttpClient:
+    """Один клиент на процесс. Пересоздаётся, если сменился API_BASE_URL."""
+    global _client, _client_base
+
+    current = base_url()
+    if _client is not None and _client_base == current:
+        return _client
+
+    if _client is not None:
+        _client.close()
+
+    _client = HttpClient(
+        current,
+        # Заголовки приходят готовыми в каждый вызов — общей фабрики тут нет,
+        # потому что Bearer-токены живут в вызывающем коде и меняются на лету.
+        headers_factory=dict,
+        connect_timeout=_float_env("API_CONNECT_TIMEOUT", 3.0),
+        # Поиск отвечает за 1-3 с; 8 с уже означает, что слот потерян и ждать
+        # дальше бессмысленно — лучше зайти в следующий слот со свежей капчей.
+        read_timeout=_float_env("API_READ_TIMEOUT", 8.0),
+        # CreateBooking тяжелее поиска, ему даём отдельный, больший бюджет.
+        write_timeout=_float_env("API_WRITE_TIMEOUT", 20.0),
+        max_retries=int(_float_env("API_HTTP_RETRIES", 2)),
+        name="t5-http",
+        debug=(env("API_HTTP_DEBUG") or "0") not in ("0", "false", "no"),
+    )
+    _client_base = current
+    return _client
+
+
+def reset_client() -> None:
+    """Закрыть соединение (смена окружения, конец теста)."""
+    global _client, _client_base
+    if _client is not None:
+        _client.close()
+    _client = None
+    _client_base = ""
+
+
+def warmup_connection() -> bool:
+    """Поднять TCP+TLS заранее, чтобы в момент слота не платить handshake."""
+    return get_client().warmup()
+
+
+def api_host() -> str:
+    return urlsplit(base_url()).hostname or "turkmenistanairlines.tm"
+
+
+def api_call(
+    method: str,
+    path: str,
+    *,
+    headers: dict[str, str],
+    body: dict[str, Any] | None = None,
+    idempotent: bool | None = None,
+) -> Response:
+    """
+    Полный ответ (статус, заголовки, тело, латентность). Бросает RequestFailed.
+
+    User-Agent подставляется здесь: он ротируется по времени, и правильнее
+    брать актуальное значение в момент отправки, чем полагаться на то, что
+    вызывающий не забыл обновить свой словарь заголовков.
+    """
+    request_headers = dict(headers)
+    request_headers["user-agent"] = current_ios_user_agent()
+    request_headers.setdefault("host", api_host())
+
+    return get_client().request(
+        method,
+        path,
+        headers=request_headers,
+        body=body,
+        idempotent=idempotent,
+    )
+
+
+def api_request(
+    method: str,
+    path: str,
+    *,
+    headers: dict[str, str],
+    body: dict[str, Any] | None = None,
+    idempotent: bool | None = None,
+) -> tuple[int, dict[str, Any] | str, float | None]:
+    """
+    Совместимая обёртка: `(status, тело, Retry-After)` — как у старого api_request.
+
+    Сетевые сбои превращаются в кортеж со статусом 0, чтобы вызывающий цикл
+    обработал их как обычную неудачу цикла и ушёл в следующий слот. Исключение —
+    `ResultUnknown` для неидемпотентных запросов: его пробрасываем, потому что
+    «ответ потерян» на CreateBooking нельзя молча считать неудачей.
+    """
+    try:
+        response = api_call(
+            method, path, headers=headers, body=body, idempotent=idempotent
+        )
+    except ResultUnknown:
+        raise
+    except RequestFailed as exc:
+        return 0, f"сеть: {exc}", None
+
+    return response.status, response.body, response.retry_after  # type: ignore[return-value]

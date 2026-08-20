@@ -1,0 +1,42 @@
+{
+  "passengers": [
+    {
+      "id": "1",
+      "type": "adult",
+      "first_name": "Example",
+      "last_name": "One",
+      "dob": "01.01.1990",
+      "gender": "M",
+      "doc_number": "II-LB 000000",
+      "doc_expdt": "01.01.2040",
+      "email": "you@gmail.com",
+      "phone": "63000000",
+      "citizenship": "TM"
+    },
+    {
+      "id": "2",
+      "type": "adult",
+      "first_name": "Example",
+      "last_name": "Two",
+      "dob": "02.02.1992",
+      "gender": "F",
+      "doc_number": "II-LB 000001",
+      "doc_expdt": "01.01.2040",
+      "email": "you2@gmail.com",
+      "phone": "63000001",
+      "citizenship": "TM"
+    },
+    {
+      "id": "3",
+      "first_name": "Baby",
+      "last_name": "One",
+      "dob": "01.06.2024",
+      "gender": "M",
+      "doc_number": "II-LB 000002",
+      "doc_expdt": "01.01.2040",
+      "email": "you@gmail.com",
+      "phone": "63000000",
+      "citizenship": "TM"
+    }
+  ]
+}

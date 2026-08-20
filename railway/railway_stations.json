@@ -1,0 +1,1283 @@
+{
+  "updated_at": "2026-08-19 14:40:26",
+  "stations": [
+    {
+      "id": 4,
+      "title": "Туркменбашы",
+      "title_tm": "Türkmenbaşy",
+      "title_ru": "Туркменбашы",
+      "title_en": "Turkmenbashy",
+      "latitude": 40.0236,
+      "longitude": 52.9597
+    },
+    {
+      "id": 5,
+      "title": "Гуша",
+      "title_tm": "Guşa",
+      "title_ru": "Гуша",
+      "title_en": "Gusha",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 6,
+      "title": "Белек",
+      "title_tm": "Belek",
+      "title_ru": "Белек",
+      "title_en": "Belek",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 7,
+      "title": "Джебель",
+      "title_tm": "Jebel",
+      "title_ru": "Джебель",
+      "title_en": "Jebel",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 8,
+      "title": "Балканабат",
+      "title_tm": "Balkanabat",
+      "title_ru": "Балканабат",
+      "title_en": "Balkanabat",
+      "latitude": 39.5108,
+      "longitude": 54.3671
+    },
+    {
+      "id": 9,
+      "title": "Акжагюма",
+      "title_tm": "Akjaguýma",
+      "title_ru": "Акжагюма",
+      "title_en": "Akjaguyma",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 10,
+      "title": "Берекет",
+      "title_tm": "Bereket",
+      "title_ru": "Берекет",
+      "title_en": "Bereket",
+      "latitude": 39.2436,
+      "longitude": 55.5147
+    },
+    {
+      "id": 11,
+      "title": "Узынсув",
+      "title_tm": "Uzynsuw",
+      "title_ru": "Узынсув",
+      "title_en": "Uzynsuw",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 12,
+      "title": "Кизиларбат",
+      "title_tm": "Gyzylarbat",
+      "title_ru": "Кизиларбат",
+      "title_en": "Gyzylarbat",
+      "latitude": 38.9797,
+      "longitude": 56.2792
+    },
+    {
+      "id": 13,
+      "title": "Бамы",
+      "title_tm": "Bamy",
+      "title_ru": "Бамы",
+      "title_en": "Bamy",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 14,
+      "title": "Арчман",
+      "title_tm": "Arçman",
+      "title_ru": "Арчман",
+      "title_en": "Archman",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 15,
+      "title": "Бахерден",
+      "title_tm": "Bäherden",
+      "title_ru": "Бахерден",
+      "title_en": "Baherden",
+      "latitude": 38.4386,
+      "longitude": 57.4319
+    },
+    {
+      "id": 16,
+      "title": "Гёкдепе",
+      "title_tm": "Gökdepe",
+      "title_ru": "Гёкдепе",
+      "title_en": "Gokdepe",
+      "latitude": 38.1614,
+      "longitude": 57.9556
+    },
+    {
+      "id": 17,
+      "title": "Ашхабад",
+      "title_tm": "Aşgabat",
+      "title_ru": "Ашхабад",
+      "title_en": "Ashgabat",
+      "latitude": 37.9601,
+      "longitude": 58.3261
+    },
+    {
+      "id": 18,
+      "title": "Аннау",
+      "title_tm": "Änew",
+      "title_ru": "Аннау",
+      "title_en": "Anew",
+      "latitude": 37.8908,
+      "longitude": 58.5164
+    },
+    {
+      "id": 19,
+      "title": "Гяверс",
+      "title_tm": "Gäwers",
+      "title_ru": "Гяверс",
+      "title_en": "Gawers",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 20,
+      "title": "Яшлык",
+      "title_tm": "Ýaşlyk",
+      "title_ru": "Яшлык",
+      "title_en": "Yashlyk",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 21,
+      "title": "Артык",
+      "title_tm": "Artyk",
+      "title_ru": "Артык",
+      "title_en": "Artyk",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 22,
+      "title": "Говшут",
+      "title_tm": "Gowşut",
+      "title_ru": "Говшут",
+      "title_en": "Gowshut",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 23,
+      "title": "Кака",
+      "title_tm": "Kaka",
+      "title_ru": "Кака",
+      "title_en": "Kaka",
+      "latitude": 37.3486,
+      "longitude": 59.6119
+    },
+    {
+      "id": 24,
+      "title": "Душак",
+      "title_tm": "Duşak",
+      "title_ru": "Душак",
+      "title_en": "Dushak",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 25,
+      "title": "Кюнеургенч",
+      "title_tm": "Köneürgenç",
+      "title_ru": "Кюнеургенч",
+      "title_en": "Koneurgench",
+      "latitude": 42.3411,
+      "longitude": 59.1522
+    },
+    {
+      "id": 26,
+      "title": "Лавак",
+      "title_tm": "Lawak",
+      "title_ru": "Лавак",
+      "title_en": "Lawak",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 27,
+      "title": "Дашогуз",
+      "title_tm": "Daşoguz",
+      "title_ru": "Дашогуз",
+      "title_en": "Dashoguz",
+      "latitude": 41.8363,
+      "longitude": 59.9666
+    },
+    {
+      "id": 28,
+      "title": "Гёроглы",
+      "title_tm": "Görogly",
+      "title_ru": "Гёроглы",
+      "title_en": "Gorogly",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 29,
+      "title": "Теджен",
+      "title_tm": "Tejen",
+      "title_ru": "Теджен",
+      "title_en": "Tejen",
+      "latitude": 37.3794,
+      "longitude": 60.5122
+    },
+    {
+      "id": 30,
+      "title": "Алтын сяхра",
+      "title_tm": "Altyn sährä",
+      "title_ru": "Алтын сяхра",
+      "title_en": "Altyn sahra",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 31,
+      "title": "Гарыбата",
+      "title_tm": "Garybata",
+      "title_ru": "Гарыбата",
+      "title_en": "Garybata",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 32,
+      "title": "Мары",
+      "title_tm": "Mary",
+      "title_ru": "Мары",
+      "title_en": "Mary",
+      "latitude": 37.5936,
+      "longitude": 61.8306
+    },
+    {
+      "id": 33,
+      "title": "Семеник",
+      "title_tm": "Semenik",
+      "title_ru": "Семеник",
+      "title_en": "Semenik",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 34,
+      "title": "Талхатанбаба",
+      "title_tm": "Talhatanbaba",
+      "title_ru": "Талхатанбаба",
+      "title_en": "Talhatanbaba",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 35,
+      "title": "Иолотань",
+      "title_tm": "Ýolöten",
+      "title_ru": "Иолотань",
+      "title_en": "Yoloten",
+      "latitude": 37.3006,
+      "longitude": 62.3506
+    },
+    {
+      "id": 36,
+      "title": "Солтанбент",
+      "title_tm": "Soltanbent",
+      "title_ru": "Солтанбент",
+      "title_en": "Soltanbent",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 37,
+      "title": "Ымамбаба",
+      "title_tm": "Ymambaba",
+      "title_ru": "Ымамбаба",
+      "title_en": "Ymambaba",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 38,
+      "title": "Сандыкгачы",
+      "title_tm": "Sandykgaçy",
+      "title_ru": "Сандыкгачы",
+      "title_en": "Sandykgachy",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 39,
+      "title": "Сарыязы",
+      "title_tm": "Saryýazy",
+      "title_ru": "Сарыязы",
+      "title_en": "Saryyazy",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 40,
+      "title": "Дашкопри",
+      "title_tm": "Daşköpri",
+      "title_ru": "Дашкопри",
+      "title_en": "Dashkopri",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 41,
+      "title": "Тагтабазар",
+      "title_tm": "Tagtabazar",
+      "title_ru": "Тагтабазар",
+      "title_en": "Tagtabazar",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 42,
+      "title": "Галаймор",
+      "title_tm": "Galaýmor",
+      "title_ru": "Галаймор",
+      "title_en": "Galaymor",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 43,
+      "title": "Чеменибит",
+      "title_tm": "Çemenibit",
+      "title_ru": "Чеменибит",
+      "title_en": "Chemenibit",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 44,
+      "title": "Серхетабад",
+      "title_tm": "Serhetabat",
+      "title_ru": "Серхетабад",
+      "title_en": "Serhetabat",
+      "latitude": 35.2814,
+      "longitude": 62.3708
+    },
+    {
+      "id": 45,
+      "title": "Байрамалы",
+      "title_tm": "Baýramaly",
+      "title_ru": "Байрамалы",
+      "title_en": "Bayramaly",
+      "latitude": 37.6172,
+      "longitude": 62.1706
+    },
+    {
+      "id": 46,
+      "title": "Захмет",
+      "title_tm": "Zähmet",
+      "title_ru": "Захмет",
+      "title_en": "Zahmet",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 47,
+      "title": "Учаджы",
+      "title_tm": "Üçaji",
+      "title_ru": "Учаджы",
+      "title_en": "Uchaji",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 48,
+      "title": "Репетек",
+      "title_tm": "Repetek",
+      "title_ru": "Репетек",
+      "title_en": "Repetek",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 49,
+      "title": "Туркменабад",
+      "title_tm": "Türkmenabat",
+      "title_ru": "Туркменабад",
+      "title_en": "Turkmenabat",
+      "latitude": 39.0759,
+      "longitude": 63.5786
+    },
+    {
+      "id": 50,
+      "title": "Фараб",
+      "title_tm": "Farap",
+      "title_ru": "Фараб",
+      "title_en": "Farap",
+      "latitude": 39.1878,
+      "longitude": 63.5981
+    },
+    {
+      "id": 51,
+      "title": "Бойныузын",
+      "title_tm": "Boýnyuzyn",
+      "title_ru": "Бойныузын",
+      "title_en": "Boynyuzyn",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 52,
+      "title": "Дейнау",
+      "title_tm": "Dänew",
+      "title_ru": "Дейнау",
+      "title_en": "Danew",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 53,
+      "title": "Галкыныш",
+      "title_tm": "Galkynyş",
+      "title_ru": "Галкыныш",
+      "title_en": "Galkynysh",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 54,
+      "title": "Сейди",
+      "title_tm": "Seýdi",
+      "title_ru": "Сейди",
+      "title_en": "Seydi",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 55,
+      "title": "Габаклы",
+      "title_tm": "Gabakly",
+      "title_ru": "Габаклы",
+      "title_en": "Gabakly",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 57,
+      "title": "Газоджак",
+      "title_tm": "Gazojak",
+      "title_ru": "Газоджак",
+      "title_en": "Gazojak",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 58,
+      "title": "Зергер",
+      "title_tm": "Zerger",
+      "title_ru": "Зергер",
+      "title_en": "Zerger",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 59,
+      "title": "Саят",
+      "title_tm": "Saýat",
+      "title_ru": "Саят",
+      "title_en": "Sayat",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 60,
+      "title": "Гарабекаул",
+      "title_tm": "Garabekewül",
+      "title_ru": "Гарабекаул",
+      "title_en": "Garabekewul",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 61,
+      "title": "Пелверт",
+      "title_tm": "Pelwert",
+      "title_ru": "Пелверт",
+      "title_en": "Pelwert",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 62,
+      "title": "Халач",
+      "title_tm": "Halaç",
+      "title_ru": "Халач",
+      "title_en": "Halach",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 63,
+      "title": "Атамырат",
+      "title_tm": "Atamyrat",
+      "title_ru": "Атамырат",
+      "title_en": "Atamyrat",
+      "latitude": 37.8367,
+      "longitude": 65.2011
+    },
+    {
+      "id": 64,
+      "title": "Амударья",
+      "title_tm": "Amyderýa",
+      "title_ru": "Амударья",
+      "title_en": "Amyderya",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 65,
+      "title": "Мукры",
+      "title_tm": "Mukry",
+      "title_ru": "Мукры",
+      "title_en": "Mukry",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 66,
+      "title": "Койтендаг",
+      "title_tm": "Köýtendag",
+      "title_ru": "Койтендаг",
+      "title_en": "Koytendag",
+      "latitude": 37.3739,
+      "longitude": 66.2725
+    },
+    {
+      "id": 67,
+      "title": "Келиф",
+      "title_tm": "Kelif",
+      "title_ru": "Келиф",
+      "title_en": "Kelif",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 68,
+      "title": "Этрек",
+      "title_tm": "Etrek",
+      "title_ru": "Этрек",
+      "title_en": "Etrek",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 69,
+      "title": "Дортгуйы",
+      "title_tm": "Dörtguýy",
+      "title_ru": "Дортгуйы",
+      "title_en": "Dortguyy",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 70,
+      "title": "Керки",
+      "title_tm": "Kerki",
+      "title_ru": "Керки",
+      "title_en": "Kerki",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 71,
+      "title": "Ичогуз",
+      "title_tm": "Içoguz",
+      "title_ru": "Ичогуз",
+      "title_en": "Ichoguz",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 72,
+      "title": "Рухнама",
+      "title_tm": "Ruhnama",
+      "title_ru": "Рухнама",
+      "title_en": "Ruhnama",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 73,
+      "title": "Андалып",
+      "title_tm": "Andalyp",
+      "title_ru": "Андалып",
+      "title_en": "Andalyp",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 74,
+      "title": "Огузабат",
+      "title_tm": "Oguzabat",
+      "title_ru": "Огузабат",
+      "title_en": "Oguzabat",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 75,
+      "title": "Шаумян",
+      "title_tm": "Şaumýan",
+      "title_ru": "Шаумян",
+      "title_en": "Shaumyan",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 76,
+      "title": "Искендер",
+      "title_tm": "Isgender",
+      "title_ru": "Искендер",
+      "title_en": "Isgender",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 77,
+      "title": "Келете",
+      "title_tm": "Kelete",
+      "title_ru": "Келете",
+      "title_en": "Kelete",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 78,
+      "title": "Гоч",
+      "title_tm": "Goç",
+      "title_ru": "Гоч",
+      "title_en": "Goch",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 79,
+      "title": "Джанахыр",
+      "title_tm": "Janahyr",
+      "title_ru": "Джанахыр",
+      "title_en": "Janahyr",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 80,
+      "title": "Аркач",
+      "title_tm": "Arkaç",
+      "title_ru": "Аркач",
+      "title_en": "Arkach",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 81,
+      "title": "Айдын",
+      "title_tm": "Aýdyň",
+      "title_ru": "Айдын",
+      "title_en": "Aydyn",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 82,
+      "title": "Гаратенгир",
+      "title_tm": "Garatengir",
+      "title_ru": "Гаратенгир",
+      "title_en": "Garatengir",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 83,
+      "title": "Янгаджа",
+      "title_tm": "Ýangaja",
+      "title_ru": "Янгаджа",
+      "title_en": "Yangaja",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 84,
+      "title": "Кервен",
+      "title_tm": "Kerwen",
+      "title_ru": "Кервен",
+      "title_en": "Kerwen",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 85,
+      "title": "Ербент",
+      "title_tm": "Ýerbent",
+      "title_ru": "Ербент",
+      "title_en": "Yerbent",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 86,
+      "title": "Дюели",
+      "title_tm": "Düýeli",
+      "title_ru": "Дюели",
+      "title_en": "Duyeli",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 87,
+      "title": "Гурбангала",
+      "title_tm": "Gurbangala",
+      "title_ru": "Гурбангала",
+      "title_en": "Gurbangala",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 88,
+      "title": "Чигаджы",
+      "title_tm": "Çigajy",
+      "title_ru": "Чигаджы",
+      "title_en": "Chigajy",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 89,
+      "title": "Пески",
+      "title_tm": "Peski",
+      "title_ru": "Пески",
+      "title_en": "Peski",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 90,
+      "title": "Гаравулгуйы",
+      "title_tm": "Garawulguýy",
+      "title_ru": "Гаравулгуйы",
+      "title_en": "Garawulguyy",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 91,
+      "title": "Балхана",
+      "title_tm": "Balhana",
+      "title_ru": "Балхана",
+      "title_en": "Balhana",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 92,
+      "title": "Халкабат",
+      "title_tm": "Halkabat",
+      "title_ru": "Халкабат",
+      "title_en": "Halkabat",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 93,
+      "title": "Кукуртли",
+      "title_tm": "Kükürtli",
+      "title_ru": "Кукуртли",
+      "title_en": "Kukurtli",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 94,
+      "title": "Дарганата",
+      "title_tm": "Darganata",
+      "title_ru": "Дарганата",
+      "title_en": "Darganata",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 95,
+      "title": "Лебап",
+      "title_tm": "Lebap",
+      "title_ru": "Лебап",
+      "title_en": "Lebap",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 96,
+      "title": "Сазакин",
+      "title_tm": "Sazakin",
+      "title_ru": "Сазакин",
+      "title_en": "Sazakin",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 97,
+      "title": "Аксув",
+      "title_tm": "Aksuw",
+      "title_ru": "Аксув",
+      "title_en": "Aksuw",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 98,
+      "title": "Бабадурмаз",
+      "title_tm": "Babadurmaz",
+      "title_ru": "Бабадурмаз",
+      "title_en": "Babadurmaz",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 99,
+      "title": "Армансагат",
+      "title_tm": "Armansagat",
+      "title_ru": "Армансагат",
+      "title_en": "Armansagat",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 100,
+      "title": "Такыр",
+      "title_tm": "Takyr",
+      "title_ru": "Такыр",
+      "title_en": "Takyr",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 101,
+      "title": "Гёксюри",
+      "title_tm": "Göksüýri",
+      "title_ru": "Гёксюри",
+      "title_en": "Goksuyri",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 102,
+      "title": "Дянеата",
+      "title_tm": "Däneata",
+      "title_ru": "Дянеата",
+      "title_en": "Daneata",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 103,
+      "title": "Довлетяр",
+      "title_tm": "Döwletýar",
+      "title_ru": "Довлетяр",
+      "title_en": "Dowletyar",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 104,
+      "title": "Бугдайлы",
+      "title_tm": "Bugdaýly",
+      "title_ru": "Бугдайлы",
+      "title_en": "Bugdayly",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 105,
+      "title": "Балгуйы",
+      "title_tm": "Balguýy",
+      "title_ru": "Балгуйы",
+      "title_en": "Balguyy",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 106,
+      "title": "Мадов",
+      "title_tm": "Madow",
+      "title_ru": "Мадов",
+      "title_en": "Madow",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 107,
+      "title": "Акжадепе",
+      "title_tm": "Akjadepe",
+      "title_ru": "Акжадепе",
+      "title_en": "Akjadepe",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 108,
+      "title": "Майский",
+      "title_tm": "Maýski",
+      "title_ru": "Майский",
+      "title_en": "Mayski",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 109,
+      "title": "Сахра",
+      "title_tm": "Sähra",
+      "title_ru": "Сахра",
+      "title_en": "Sahra",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 110,
+      "title": "Алтын кёл",
+      "title_tm": "Altyn köl",
+      "title_ru": "Алтын кёл",
+      "title_en": "Altyn kol",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 111,
+      "title": "Тахияташ",
+      "title_tm": "Tahiýataş",
+      "title_ru": "Тахияташ",
+      "title_en": "Tahiyatash",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 112,
+      "title": "Акмаянын елы",
+      "title_tm": "Akmaýanyň ýoly",
+      "title_ru": "Акмаянын елы",
+      "title_en": "Akmayanyn yoly",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 113,
+      "title": "Шамулки",
+      "title_tm": "Şamülki",
+      "title_ru": "Шамулки",
+      "title_en": "Shamulki",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 114,
+      "title": "Шасенем",
+      "title_tm": "Şasenem",
+      "title_ru": "Шасенем",
+      "title_en": "Shasenem",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 115,
+      "title": "Алтын асыр",
+      "title_tm": "Altyn asyr",
+      "title_ru": "Алтын асыр",
+      "title_en": "Altyn asyr",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 116,
+      "title": "Сарахс",
+      "title_tm": "Sarahs",
+      "title_ru": "Сарахс",
+      "title_en": "Sarahs",
+      "latitude": 36.5397,
+      "longitude": 61.2214
+    },
+    {
+      "id": 117,
+      "title": "Ата",
+      "title_tm": "Ata",
+      "title_ru": "Ата",
+      "title_en": "Ata",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 118,
+      "title": "Огузхан",
+      "title_tm": "Oguzhan",
+      "title_ru": "Огузхан",
+      "title_en": "Oguzhan",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 119,
+      "title": "Гуланлы",
+      "title_tm": "Gulanly",
+      "title_ru": "Гуланлы",
+      "title_en": "Gulanly",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 120,
+      "title": "Ак ел",
+      "title_tm": "Ak ýol",
+      "title_ru": "Ак ел",
+      "title_en": "Ak yol",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 121,
+      "title": "Арзув",
+      "title_tm": "Arzuw",
+      "title_ru": "Арзув",
+      "title_en": "Arzuw",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 122,
+      "title": "Ясга",
+      "title_tm": "Ýasga",
+      "title_ru": "Ясга",
+      "title_en": "Yasga",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 123,
+      "title": "Бургун",
+      "title_tm": "Burgun",
+      "title_ru": "Бургун",
+      "title_en": "Burgun",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 124,
+      "title": "Узбой",
+      "title_tm": "Uzboý",
+      "title_ru": "Узбой",
+      "title_en": "Uzboy",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 125,
+      "title": "Гокдере",
+      "title_tm": "Gökdere",
+      "title_ru": "Гокдере",
+      "title_en": "Gokdere",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 126,
+      "title": "Гызылгая",
+      "title_tm": "Gyzylgaýa",
+      "title_ru": "Гызылгая",
+      "title_en": "Gyzylgaya",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 127,
+      "title": "Авламыш",
+      "title_tm": "Awlamyş",
+      "title_ru": "Авламыш",
+      "title_en": "Awlamysh",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 128,
+      "title": "Арсарыбаба",
+      "title_tm": "Ärsarybaba",
+      "title_ru": "Арсарыбаба",
+      "title_en": "Arsarybaba",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 129,
+      "title": "Беркарарлык",
+      "title_tm": "Berkararlyk",
+      "title_ru": "Беркарарлык",
+      "title_en": "Berkararlyk",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 130,
+      "title": "Хазар",
+      "title_tm": "Hazar",
+      "title_ru": "Хазар",
+      "title_en": "Hazar",
+      "latitude": 39.4392,
+      "longitude": 53.1211
+    },
+    {
+      "id": 131,
+      "title": "Кувват",
+      "title_tm": "Kuwwat",
+      "title_ru": "Кувват",
+      "title_en": "Kuwwat",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 132,
+      "title": "Парахат",
+      "title_tm": "Parahat",
+      "title_ru": "Парахат",
+      "title_en": "Parahat",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 133,
+      "title": "Полатлы",
+      "title_tm": "Polatly",
+      "title_ru": "Полатлы",
+      "title_en": "Polatly",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 134,
+      "title": "Шанлы",
+      "title_tm": "Şanly",
+      "title_ru": "Шанлы",
+      "title_en": "Shanly",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 135,
+      "title": "Серхетяка",
+      "title_tm": "Serhetýaka",
+      "title_ru": "Серхетяка",
+      "title_en": "Serhetyaka",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 136,
+      "title": "Зарпчы",
+      "title_tm": "Zarpçy",
+      "title_ru": "Зарпчы",
+      "title_en": "Zarpchy",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 137,
+      "title": "Маслахат",
+      "title_tm": "Maslahat",
+      "title_ru": "Маслахат",
+      "title_en": "Maslahat",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 138,
+      "title": "Керкичи",
+      "title_tm": "Kerkiçi",
+      "title_ru": "Керкичи",
+      "title_en": "Kerkichi",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 139,
+      "title": "Дашрабат",
+      "title_tm": "Daşrabat",
+      "title_ru": "Дашрабат",
+      "title_en": "Dashrabat",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 140,
+      "title": "Акяйла",
+      "title_tm": "Akýaýla",
+      "title_ru": "Акяйла",
+      "title_en": "Akyayla",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 141,
+      "title": "Имамназар",
+      "title_tm": "Ymamnazar",
+      "title_ru": "Имамназар",
+      "title_en": "Ymamnazar",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 142,
+      "title": "Талимерджен",
+      "title_tm": "Tellimerjen",
+      "title_ru": "Талимерджен",
+      "title_en": "Tellimerjen",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 143,
+      "title": "Бургучы",
+      "title_tm": "Burguçy",
+      "title_ru": "Бургучы",
+      "title_en": "Burguchy",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 144,
+      "title": "Азатлык",
+      "title_tm": "Azatlyk",
+      "title_ru": "Азатлык",
+      "title_en": "Azatlyk",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 145,
+      "title": "РЗД. 156",
+      "title_tm": "RZD. 156",
+      "title_ru": "РЗД. 156",
+      "title_en": "RZD. 156",
+      "latitude": null,
+      "longitude": null
+    },
+    {
+      "id": 146,
+      "title": "Овадандепе",
+      "title_tm": "Owadandepe",
+      "title_ru": "Овадандепе",
+      "title_en": "Owadandepe",
+      "latitude": null,
+      "longitude": null
+    }
+  ]
+}

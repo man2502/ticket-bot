@@ -1,0 +1,6 @@
+chapar_check.env
+chapar_state.json
+.env.local
+__pycache__/
+*.pyc
+.DS_Store

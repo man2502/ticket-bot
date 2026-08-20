@@ -1,0 +1,9 @@
+check.env
+railway_state.json
+railway_state.json.corrupt
+railway_bookings.json
+railway_bookings.json.corrupt
+.env.local
+__pycache__/
+*.pyc
+.DS_Store

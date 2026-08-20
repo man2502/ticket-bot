@@ -1,0 +1,8 @@
+check.env
+api_captcha_last.png
+api_state.json
+.env.local
+__pycache__/
+*.pyc
+captcha_dataset_api/
+.DS_Store

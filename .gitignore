@@ -1,0 +1,24 @@
+.env
+.env.local
+profiles/*
+!profiles/example.env
+.venv/
+__pycache__/
+*.pyc
+.state.json
+.search_rate_*.json
+.debug/
+.debug_*.html
+playwright-report/
+.DS_Store
+passenger.json
+passengers.json
+.cursor-captcha-agent
+captcha_dataset/
+
+# Подпроекты — см. airlines_web/, airlines_api/, chapar/, railway/
+airlines_web/.venv/
+airlines_api/.venv/
+chapar/.venv/
+railway/.venv/
+mitmweb-flows/
