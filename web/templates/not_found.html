@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h1>{{ title }}</h1>
+{% if note %}<div class="alert error">{{ note }}</div>{% endif %}
+<p><a class="button-link secondary" href="{{ back_url }}">Назад</a></p>
+{% endblock %}

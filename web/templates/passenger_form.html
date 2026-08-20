@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Пассажир' if passenger else 'Новый пассажир' }}{% endblock %}
+
+{% macro field(name, label, value, hint='', type='text', required=false) %}
+  {# Ошибка показывается под своим полем, а не общим списком наверху:
+     иначе при десяти полях непонятно, какое именно править. #}
+  <label class="{% if form.errors.get(name) %}has-error{% endif %}">
+    {{ label }}{% if required %} <span class="req">*</span>{% endif %}
+    <input name="{{ name }}" type="{{ type }}" value="{{ value }}"
+           {% if required %}required{% endif %}>
+    {% if form.errors.get(name) %}
+      <span class="field-error">{{ form.errors[name] }}</span>
+    {% elif hint %}
+      <span class="field-hint">{{ hint }}</span>
+    {% endif %}
+  </label>
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+  <h1>{{ 'Изменить пассажира' if passenger else 'Новый пассажир' }}</h1>
+  <a class="button-link secondary" href="/passengers">К списку</a>
+</div>
+
+{% if error %}
+  <div class="alert error">{{ error }}</div>
+{% endif %}
+
+<form method="post"
+      action="{{ '/passengers/' ~ passenger.id if passenger else '/passengers/new' }}"
+      class="card-form">
+
+  <h2>Как в паспорте</h2>
+  <div class="field-grid">
+    {{ field('last_name', 'Фамилия', form.last_name, 'Латиницей: TEST', required=true) }}
+    {{ field('first_name', 'Имя', form.first_name, 'Латиницей: ANVAR', required=true) }}
+    {{ field('dob', 'Дата рождения', form.dob, 'ДД.ММ.ГГГГ', required=true) }}
+
+    <label class="{% if form.errors.get('gender') %}has-error{% endif %}">
+      Пол <span class="req">*</span>
+      <select name="gender">
+        {% for value, title in genders %}
+          <option value="{{ value }}" {% if form.gender == value %}selected{% endif %}>{{ title }}</option>
+        {% endfor %}
+      </select>
+      {% if form.errors.get('gender') %}<span class="field-error">{{ form.errors['gender'] }}</span>{% endif %}
+    </label>
+  </div>
+
+  <h2>Документ</h2>
+  <div class="field-grid">
+    {{ field('doc_number', 'Номер документа', form.doc_number, 'Без пробелов: AA1234567', required=true) }}
+    {{ field('doc_expdt', 'Действителен до', form.doc_expdt, 'ДД.ММ.ГГГГ, необязательно') }}
+    {{ field('citizenship', 'Гражданство', form.citizenship, 'Код страны: TM') }}
+  </div>
+
+  <h2>Тариф и контакты</h2>
+  <div class="field-grid">
+    <label class="{% if form.errors.get('pax_type') %}has-error{% endif %}">
+      Тип пассажира
+      <select name="pax_type">
+        {% for value, title in pax_types %}
+          <option value="{{ value }}" {% if form.pax_type == value %}selected{% endif %}>{{ title }}</option>
+        {% endfor %}
+      </select>
+      <span class="field-hint">
+        Обычно оставляйте «по дате рождения» — тариф посчитается от даты рейса
+      </span>
+    </label>
+
+    {{ field('phone', 'Телефон', form.phone, '61234567 — приведём к +993…', type='tel') }}
+    {{ field('email', 'Email', form.email, 'Необязательно', type='email') }}
+    {{ field('note', 'Заметка', form.note, 'Для себя, в бронь не уходит') }}
+  </div>
+
+  <div class="form-actions">
+    <button type="submit">{{ 'Сохранить' if passenger else 'Добавить' }}</button>
+    <a class="button-link secondary" href="/passengers">Отмена</a>
+  </div>
+</form>
+
+{% if passenger %}
+<p class="muted small">
+  Добавлен {{ passenger.created_at.strftime('%d.%m.%Y') }},
+  изменён {{ passenger.updated_at.strftime('%d.%m.%Y %H:%M') }}.
+  {% if not user.is_admin %}Удаление доступно администратору.{% endif %}
+</p>
+{% endif %}
+{% endblock %}

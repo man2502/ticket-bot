@@ -28,6 +28,8 @@ from passenger_loader import age_on_date, infer_pax_type_from_dob, parse_dob  # 
 __all__ = [
     "PassengerForm",
     "clean_passenger_form",
+    "export_for_bot",
+    "validate_group",
     "normalize_phone",
     "pax_type_on_date",
     "format_dob",
@@ -262,3 +264,71 @@ def clean_passenger_form(data: dict[str, str]) -> PassengerForm:
         note=" ".join((data.get("note") or "").split())[:255],
         errors=errors,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Передача пассажиров ботам
+# --------------------------------------------------------------------------- #
+
+
+def validate_group(passengers: list[dict], flight_date: str) -> list[str]:
+    """
+    Проверить состав группы на дату рейса. Возвращает список ошибок.
+
+    Ловим здесь, а не при запуске бота: бот на таком составе просто упадёт
+    с RuntimeError уже в цикле поиска, и человек увидит это в логах вместо
+    внятного сообщения в форме.
+    """
+    if not passengers:
+        return ["Не выбран ни один пассажир"]
+
+    try:
+        on_date = parse_dob(flight_date)
+    except ValueError:
+        return [f"Дата рейса: не разобрал {flight_date!r}"]
+
+    errors: list[str] = []
+    counts = {"adult": 0, "child": 0, "infant": 0}
+
+    for pax in passengers:
+        explicit = (pax.get("type") or "").strip().lower()
+        if explicit in counts:
+            counts[explicit] += 1
+            continue
+        try:
+            counts[pax_type_on_date(pax["dob"], on_date)] += 1
+        except (ValueError, KeyError):
+            name = f"{pax.get('first_name', '')} {pax.get('last_name', '')}".strip()
+            errors.append(f"{name or 'пассажир'}: не разобрал дату рождения")
+
+    # Требование перевозчиков: ребёнок не летит и не едет один.
+    if (counts["child"] or counts["infant"]) and not counts["adult"]:
+        errors.append("Для ребёнка или младенца нужен хотя бы один взрослый в списке")
+
+    # Младенец летит на руках, поэтому взрослых должно быть не меньше.
+    if counts["infant"] > counts["adult"]:
+        errors.append(
+            f"Младенцев ({counts['infant']}) больше, чем взрослых ({counts['adult']}) — "
+            f"каждый младенец должен быть с отдельным взрослым"
+        )
+
+    return errors
+
+
+def export_for_bot(passengers: list[dict], target_dir: Path) -> tuple[Path, str]:
+    """
+    Записать passengers.json для бота. Возвращает (путь, значение PASSENGER_IDS).
+
+    Боты читают пассажиров из файла и выбирают нужных по PASSENGER_IDS. Веб
+    отдаёт им ровно тех, кто выбран в процессе, поэтому в файл пишем только их,
+    а порядок сохраняем — он влияет на распределение мест.
+    """
+    import json
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path = target_dir / "passengers.json"
+    path.write_text(
+        json.dumps(passengers, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return path, ",".join(str(pax["id"]) for pax in passengers)

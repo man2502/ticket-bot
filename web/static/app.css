@@ -203,3 +203,95 @@ button.danger { background: var(--error); }
 
 .login-card h1 { text-align: center; margin: 0 0 4px; }
 .login-card button { margin-top: 6px; }
+
+/* ------------------------------------------------- заголовок раздела */
+
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.page-head h1 { margin: 0; }
+
+/* Ссылка, оформленная как кнопка: <a> нельзя класть внутрь <form>,
+   а рядом с настоящими кнопками она должна выглядеть так же. */
+.button-link {
+  display: inline-block;
+  padding: 8px 16px;
+  background: var(--accent);
+  border-radius: 6px;
+  color: #fff;
+  text-decoration: none;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.button-link:hover { filter: brightness(1.1); }
+
+.button-link.secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.button-link.secondary:hover { color: var(--text); border-color: var(--muted); }
+
+/* ------------------------------------------------------------ поиск */
+
+.search { display: flex; gap: 8px; margin-bottom: 16px; }
+.search input { margin-top: 0; max-width: 380px; }
+
+/* ------------------------------------------------------ форма-карточка */
+
+.card-form {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 24px 24px;
+}
+
+.card-form h2:first-child { margin-top: 0; }
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px 18px;
+}
+
+.field-hint, .field-error { display: block; font-size: 12px; margin-top: 4px; }
+.field-hint { color: var(--muted); }
+.field-error { color: var(--error); }
+
+/* Подсветка поля с ошибкой — чтобы при десяти полях было видно, какое править. */
+.has-error input, .has-error select { border-color: var(--error); }
+
+.req { color: var(--error); }
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+/* --------------------------------------------------------- мелочи */
+
+.small { font-size: 12px; }
+
+.tag {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+.grid td a { color: var(--accent); text-decoration: none; }
+.grid td a:hover { text-decoration: underline; }

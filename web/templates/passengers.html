@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Пассажиры{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Пассажиры</h1>
+  <a class="button-link" href="/passengers/new">Добавить</a>
+</div>
+
+<form class="search" method="get" action="/passengers">
+  <input name="q" value="{{ query }}" placeholder="Имя, фамилия или номер документа">
+  <button type="submit">Найти</button>
+  {% if query %}<a class="button-link secondary" href="/passengers">Сбросить</a>{% endif %}
+</form>
+
+{% if passengers %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Фамилия и имя</th>
+      <th>Дата рождения</th>
+      <th>Тип</th>
+      <th>Документ</th>
+      <th>Контакты</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in passengers %}
+    <tr>
+      <td>
+        <a href="/passengers/{{ p.id }}">{{ p.last_name }} {{ p.first_name }}</a>
+        {% if p.note %}<div class="muted small">{{ p.note }}</div>{% endif %}
+      </td>
+      <td>{{ p.dob }}</td>
+      <td>
+        {% if p.pax_type %}
+          {# Тип задан вручную — он и поедет в бронь, независимо от возраста. #}
+          <span class="tag">{{ p.pax_type }}</span>
+        {% else %}
+          <span class="muted">{{ describe_age(p) }}</span>
+        {% endif %}
+      </td>
+      <td>
+        {{ p.doc_number }}
+        {% if p.doc_expdt %}<div class="muted small">до {{ p.doc_expdt }}</div>{% endif %}
+      </td>
+      <td class="small">
+        {% if p.phone %}{{ p.phone }}{% endif %}
+        {% if p.email %}<div class="muted">{{ p.email }}</div>{% endif %}
+        {% if not p.phone and not p.email %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td class="row-actions">
+        <a class="button-link secondary" href="/passengers/{{ p.id }}">Изменить</a>
+        {% if user.is_admin %}
+        <form method="post" action="/passengers/{{ p.id }}/delete" class="inline-form"
+              onsubmit="return confirm('Удалить {{ p.last_name }} {{ p.first_name }}?')">
+          <button type="submit" class="danger">Удалить</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p class="muted small">
+  Тип пассажира без явного указания считается от даты рейса при создании
+  процесса: младенец до 5 лет, ребёнок до 18.
+</p>
+{% else %}
+<div class="alert info">
+  {% if query %}
+    По запросу «{{ query }}» ничего не найдено.
+  {% else %}
+    Список пуст. <a href="/passengers/new">Добавьте первого пассажира.</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
