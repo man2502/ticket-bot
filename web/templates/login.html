@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Вход{% endblock %}
+{% block main_class %}login-page{% endblock %}
+
+{% block content %}
+<form class="login-card" method="post" action="/login">
+  <h1>Панель билетов</h1>
+
+  {% if error %}
+    <div class="alert error">{{ error }}</div>
+  {% endif %}
+
+  <label>
+    Логин
+    <input name="login" autocomplete="username" autofocus required>
+  </label>
+
+  <label>
+    Пароль
+    <input name="password" type="password" autocomplete="current-password" required>
+  </label>
+
+  {# Куда вернуть человека после входа — тот путь, с которого его развернуло. #}
+  <input type="hidden" name="next" value="{{ next_url }}">
+
+  <button type="submit">Войти</button>
+</form>
+{% endblock %}

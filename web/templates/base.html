@@ -1,0 +1,35 @@
+{# Общий каркас страницы: шапка с навигацией и место под содержимое. #}
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Панель билетов{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+{% if user %}
+<header class="topbar">
+  <a class="brand" href="/">Билеты</a>
+  <nav>
+    {% for item in nav_items %}
+      {# Подсветка активного раздела: точное совпадение или вложенный путь. #}
+      <a href="{{ item.url }}"
+         class="{% if current_path == item.url or current_path.startswith(item.url ~ '/') %}active{% endif %}">
+        {{ item.title }}
+      </a>
+    {% endfor %}
+  </nav>
+  <div class="user-box">
+    <span class="login">{{ user.login }}</span>
+    <span class="role role-{{ user.role }}">{{ 'админ' if user.is_admin else 'пользователь' }}</span>
+    <a class="logout" href="/logout">Выйти</a>
+  </div>
+</header>
+{% endif %}
+
+<main class="{% block main_class %}container{% endblock %}">
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

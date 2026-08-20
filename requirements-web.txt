@@ -1,0 +1,21 @@
+# Зависимости веб-панели (web/). Для запуска самих ботов из CLI не нужны.
+#
+# Установка:
+#   .venv/bin/python -m pip install -r requirements-web.txt          # macOS / Linux
+#   .venv\Scripts\python.exe -m pip install -r requirements-web.txt  # Windows
+
+fastapi>=0.115
+uvicorn[standard]>=0.32
+sqlalchemy>=2.0
+
+# Fernet — шифрование паролей T5/Railway, SMTP и ключа SMS в базе.
+cryptography>=43.0
+
+# Подпись cookie сессии.
+itsdangerous>=2.2
+
+# Разбор form-data: без него FastAPI не примет обычные HTML-формы.
+python-multipart>=0.0.12
+
+# Шаблоны. Обычно уже стоит как зависимость torch, но полагаться на это нельзя.
+jinja2>=3.1

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Обзор{% endblock %}
+
+{% block content %}
+<h1>Обзор</h1>
+
+<div class="cards">
+  <div class="card">
+    <div class="card-value">{{ stats.jobs_active }}</div>
+    <div class="card-label">процессов в работе</div>
+  </div>
+  <div class="card">
+    <div class="card-value">{{ stats.jobs_total }}</div>
+    <div class="card-label">процессов всего</div>
+  </div>
+  <div class="card">
+    <div class="card-value">{{ stats.passengers }}</div>
+    <div class="card-label">пассажиров</div>
+  </div>
+  {# Этот показатель важнее остальных: бронь под вопросом требует, чтобы
+     человек сходил в личный кабинет и проверил, не создалась ли лишняя. #}
+  <div class="card {% if stats.needs_review %}card-alert{% endif %}">
+    <div class="card-value">{{ stats.needs_review }}</div>
+    <div class="card-label">броней под вопросом</div>
+  </div>
+</div>
+
+<h2>Справочники</h2>
+<table class="grid">
+  <thead>
+    <tr><th>Сервис</th><th>Записей</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Самолёты</td>
+      <td>{{ stations.airlines }}{% if not stations.airlines %} <span class="muted">— не синхронизировано</span>{% endif %}</td>
+    </tr>
+    <tr>
+      <td>Поезда</td>
+      <td>{{ stations.railway }}{% if not stations.railway %} <span class="muted">— не синхронизировано</span>{% endif %}</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Последние процессы</h2>
+{% if recent_jobs %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th>#</th><th>Сервис</th><th>Маршрут</th><th>Дата</th><th>Статус</th><th>Создан</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for job in recent_jobs %}
+    <tr>
+      <td>{{ job.id }}</td>
+      <td>{{ 'самолёт' if job.service == 'airlines' else 'поезд' }}</td>
+      <td>{{ job.source }} → {{ job.destination }}</td>
+      <td>{{ job.depart_date }}</td>
+      <td><span class="status status-{{ job.status }}">{{ job.status }}</span></td>
+      <td class="muted">{{ job.created_at.strftime('%d.%m %H:%M') }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="alert info">Процессов пока нет.</div>
+{% endif %}
+{% endblock %}

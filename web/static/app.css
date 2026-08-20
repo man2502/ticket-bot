@@ -1,0 +1,205 @@
+/* Оформление панели.
+   Без внешних библиотек: панель должна открываться на машине без интернета —
+   там же, где работает бот. */
+
+:root {
+  --bg: #0f1115;
+  --surface: #171a21;
+  --surface-2: #1e222b;
+  --border: #2a2f3a;
+  --text: #e6e8ec;
+  --muted: #8b93a3;
+  --accent: #4c8dff;
+  --ok: #35c48a;
+  --warn: #e0a33e;
+  --error: #e2565a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+/* ---------------------------------------------------------------- шапка */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 20px;
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+  letter-spacing: 0.2px;
+}
+
+.topbar nav { display: flex; gap: 4px; flex: 1; }
+
+.topbar nav a {
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.topbar nav a:hover { color: var(--text); background: var(--surface-2); }
+.topbar nav a.active { color: var(--text); background: var(--surface-2); }
+
+.user-box { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.user-box .login { color: var(--text); }
+.user-box .logout { color: var(--muted); text-decoration: none; }
+.user-box .logout:hover { color: var(--error); }
+
+.role {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.role-admin { color: var(--accent); border-color: var(--accent); }
+
+/* -------------------------------------------------------------- разметка */
+
+.container { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; }
+
+h1 { font-size: 22px; margin: 0 0 20px; font-weight: 600; }
+h2 { font-size: 16px; margin: 32px 0 12px; font-weight: 600; color: var(--muted); }
+
+.muted { color: var(--muted); }
+
+/* ------------------------------------------------------------- карточки */
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.card-value { font-size: 28px; font-weight: 600; }
+.card-label { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+/* Бронь под вопросом требует действий человека — выделяем. */
+.card-alert { border-color: var(--warn); }
+.card-alert .card-value { color: var(--warn); }
+
+/* -------------------------------------------------------------- таблицы */
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.grid th, .grid td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.grid th { font-size: 12px; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+.grid tr:last-child td { border-bottom: none; }
+
+/* --------------------------------------------------------------- статусы */
+
+.status {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+}
+.status-running { color: var(--accent); border-color: var(--accent); }
+.status-queued { color: var(--muted); }
+.status-booked { color: var(--ok); border-color: var(--ok); }
+.status-needs_review { color: var(--warn); border-color: var(--warn); }
+.status-failed { color: var(--error); border-color: var(--error); }
+.status-stopped { color: var(--muted); }
+
+/* --------------------------------------------------------------- формы */
+
+label { display: block; font-size: 13px; color: var(--muted); }
+
+input, select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+}
+
+input:focus, select:focus { outline: none; border-color: var(--accent); }
+
+button {
+  padding: 8px 16px;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover { filter: brightness(1.1); }
+button.danger { background: var(--error); }
+
+.form-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.form-row label { flex: 1; min-width: 160px; }
+
+/* Форма внутри ячейки таблицы: поле и кнопка в одну строку. */
+.inline-form { display: flex; gap: 6px; }
+.inline-form input { width: 150px; margin-top: 0; }
+.inline-form button { padding: 8px 12px; white-space: nowrap; }
+
+/* ------------------------------------------------------------ сообщения */
+
+.alert { padding: 12px 14px; border-radius: 8px; border: 1px solid var(--border); }
+.alert.error { border-color: var(--error); color: var(--error); }
+.alert.info { color: var(--muted); }
+
+/* ----------------------------------------------------------- вход */
+
+.login-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+
+.login-card {
+  width: 320px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.login-card h1 { text-align: center; margin: 0 0 4px; }
+.login-card button { margin-top: 6px; }

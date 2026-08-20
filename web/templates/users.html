@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Пользователи{% endblock %}
+
+{% block content %}
+<h1>Пользователи</h1>
+
+{% if error %}
+  <div class="alert error">{{ error }}</div>
+{% endif %}
+
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Логин</th><th>Роль</th><th>Статус</th><th>Последний вход</th><th>Пароль</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for u in users %}
+    <tr>
+      <td>{{ u.login }}</td>
+      <td><span class="role role-{{ u.role }}">{{ 'админ' if u.is_admin else 'пользователь' }}</span></td>
+      <td>{{ 'активен' if u.is_active else 'заблокирован' }}</td>
+      <td class="muted">
+        {{ u.last_login_at.strftime('%d.%m.%Y %H:%M') if u.last_login_at else '—' }}
+      </td>
+      <td>
+        <form method="post" action="/users/{{ u.id }}/password" class="inline-form">
+          <input name="password" type="password" placeholder="новый пароль" required minlength="8">
+          <button type="submit">Сменить</button>
+        </form>
+      </td>
+      <td>
+        {% if u.id != user.id %}
+        <form method="post" action="/users/{{ u.id }}/toggle" class="inline-form">
+          <button type="submit" class="{{ 'danger' if u.is_active else '' }}">
+            {{ 'Заблокировать' if u.is_active else 'Разблокировать' }}
+          </button>
+        </form>
+        {% else %}
+          {# Себя заблокировать нельзя — иначе панель останется без администратора. #}
+          <span class="muted">это вы</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Добавить пользователя</h2>
+<form method="post" action="/users/create" class="form-row">
+  <label>
+    Логин
+    <input name="login" required>
+  </label>
+  <label>
+    Пароль
+    <input name="password" type="password" required minlength="8">
+  </label>
+  <label>
+    Роль
+    <select name="role">
+      <option value="user">пользователь</option>
+      <option value="admin">админ</option>
+    </select>
+  </label>
+  <button type="submit">Создать</button>
+</form>
+
+<p class="muted">
+  Пользователь может вести список пассажиров и запускать процессы поиска.
+  Настройки, справочники, капчи и разблокировка броней — только у админа.
+</p>
+{% endblock %}

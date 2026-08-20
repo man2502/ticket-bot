@@ -16,9 +16,18 @@ passengers.json
 .cursor-captcha-agent
 captcha_dataset/
 
-# Подпроекты — см. airlines_web/, airlines_api/, chapar/, railway/
+# Подпроекты — см. airlines_web/, airlines_api/, chapar/, railway-api/
 airlines_web/.venv/
 airlines_api/.venv/
 chapar/.venv/
-railway/.venv/
+railway-api/.venv/
 mitmweb-flows/
+
+# Веб-панель: база, ключи шифрования, картинки капч, временные env запусков.
+# Ключи в git не попадают никогда — с ними база перестаёт защищать пароли.
+web/data/
+
+# Журналы броней ботов: содержат номера броней и ссылки на оплату.
+railway-api/railway_bookings.json
+airlines_api/api_bookings.json
+airlines_web/web_bookings.json
