@@ -112,6 +112,12 @@ def cmd_list_users(_args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Сообщения на русском: без этого консоль Windows в cp1251 печатает мусор
+    # вместо «Администратор создан».
+    from core.console import enable_utf8_output
+
+    enable_utf8_output()
+
     parser = argparse.ArgumentParser(prog="python -m web.cli", description="Обслуживание панели")
     sub = parser.add_subparsers(dest="command", required=True)
 

@@ -6,18 +6,12 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import sys
 import time
-from pathlib import Path
 from typing import Any
 
-CHAPAR_ROOT = Path(__file__).resolve().parent
-REPO_ROOT = CHAPAR_ROOT.parent
-
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-if str(CHAPAR_ROOT) not in sys.path:
-    sys.path.insert(0, str(CHAPAR_ROOT))
+# Корень репозитория и sys.path — в _bootstrap: он ищет корень по маркеру,
+# потому что папку модуля переносили и отсчёт «на уровень выше» врал.
+from _bootstrap import CHAPAR_ROOT
 
 from core.bootstrap import bootstrap
 

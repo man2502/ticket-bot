@@ -30,14 +30,16 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 WEB_ROOT = Path(__file__).resolve().parent
-REPO_ROOT = WEB_ROOT.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+
+# Корень репозитория ищет _bootstrap по маркеру: папку модуля переносили,
+# и отсчёт «на уровень выше» после переезда указывал не туда.
+from _bootstrap import setup_paths
+
+setup_paths()
 
 from core.booking_guard import BookingGuard, booking_key
 from core.term import red

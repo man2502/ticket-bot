@@ -63,9 +63,13 @@
           <option value="{{ value }}" {% if form.pax_type == value %}selected{% endif %}>{{ title }}</option>
         {% endfor %}
       </select>
-      <span class="field-hint">
-        Обычно оставляйте «по дате рождения» — тариф посчитается от даты рейса
-      </span>
+      {% if form.errors.get('pax_type') %}
+        <span class="field-error">{{ form.errors['pax_type'] }}</span>
+      {% else %}
+        <span class="field-hint">
+          Обычно оставляйте «по дате рождения» — тариф посчитается от даты рейса
+        </span>
+      {% endif %}
     </label>
 
     {{ field('phone', 'Телефон', form.phone, '61234567 — приведём к +993…', type='tel') }}

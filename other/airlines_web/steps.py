@@ -10,16 +10,18 @@ import base64
 import os
 import random
 import re
-import sys
 import time
 from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 ROOT = Path(__file__).resolve().parent
-REPO_ROOT = ROOT.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+
+# Корень репозитория ищет _bootstrap по маркеру: папку модуля переносили,
+# и отсчёт «на уровень выше» после переезда указывал не туда.
+from _bootstrap import setup_paths
+
+setup_paths()
 
 from core.env import env, env_flag
 from core.state import load_json, save_json

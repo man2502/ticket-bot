@@ -136,6 +136,11 @@ def test_duplicate_document_is_rejected(db) -> None:
     with pytest.raises(IntegrityError):
         db.flush()
 
+    # После неудачного flush сессия непригодна, пока её не откатили. Ровно это
+    # делает роут создания пассажира — иначе следующий же запрос упал бы
+    # с PendingRollbackError вместо понятного сообщения про дубль документа.
+    db.rollback()
+
 
 def test_full_name(db) -> None:
     assert _passenger().full_name == "Anvar Test"

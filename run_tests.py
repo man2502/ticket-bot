@@ -42,18 +42,26 @@ SKIP_DIRS = frozenset({".git", ".venv", "__pycache__", "profiles", "node_modules
 
 def test_dirs() -> list[Path]:
     """
-    Папки верхнего уровня, где есть test_*.py — ищем, а не перечисляем.
+    Все папки репозитория, где лежат test_*.py — ищем, а не перечисляем.
 
-    Раньше список был захардкожен. Стоило переименовать папку модуля — и её
-    тесты просто переставали запускаться, молча: отчёт оставался зелёным,
-    только тестов в нём становилось меньше.
+    Раньше список был захардкожен, и переименование папки модуля молча выключало
+    её тесты: отчёт оставался зелёным, просто тестов в нём становилось меньше.
+    Потом папки модулей переехали внутрь `other/` — и поиска только по верхнему
+    уровню тоже не хватило. Поэтому обходим дерево целиком.
     """
-    found = [REPO_ROOT] if any(REPO_ROOT.glob("test_*.py")) else []
-    for entry in sorted(REPO_ROOT.iterdir()):
-        if not entry.is_dir() or entry.name in SKIP_DIRS or entry.name.startswith("."):
-            continue
-        if any(entry.glob("test_*.py")):
-            found.append(entry)
+    found: list[Path] = []
+    if any(REPO_ROOT.glob("test_*.py")):
+        found.append(REPO_ROOT)
+
+    def walk(directory: Path) -> None:
+        for entry in sorted(directory.iterdir()):
+            if not entry.is_dir() or entry.name in SKIP_DIRS or entry.name.startswith("."):
+                continue
+            if any(entry.glob("test_*.py")):
+                found.append(entry)
+            walk(entry)
+
+    walk(REPO_ROOT)
     return found
 
 
@@ -233,7 +241,12 @@ class _Skipped(Exception):
 
 
 @contextmanager
-def _resolve_fixture(name: str, module: ModuleType, mp: _MonkeyPatch) -> Iterator[Any]:
+def _resolve_fixture(
+    name: str,
+    module: ModuleType,
+    mp: _MonkeyPatch,
+    cache: dict[str, Any] | None = None,
+) -> Iterator[Any]:
     """
     Значение одной фикстуры.
 
@@ -241,12 +254,21 @@ def _resolve_fixture(name: str, module: ModuleType, mp: _MonkeyPatch) -> Iterato
     теста. Фикстура-генератор поддержана: код после `yield` выполняется как
     teardown.
     """
+    # Одно значение фикстуры на весь тест — как в pytest. Без кеша фикстура и сам
+    # тест, запросившие tmp_path, получали РАЗНЫЕ временные каталоги, и тест,
+    # который подменяет файл в каталоге фикстуры, молча проверял не то.
+    if cache is not None and name in cache:
+        yield cache[name]
+        return
+
     if name == "monkeypatch":
+        _remember(cache, name, mp)
         yield mp
         return
 
     if name == "tmp_path":
         path = Path(tempfile.mkdtemp(prefix="tickettest-"))
+        _remember(cache, name, path)
         try:
             yield path
         finally:
@@ -257,12 +279,23 @@ def _resolve_fixture(name: str, module: ModuleType, mp: _MonkeyPatch) -> Iterato
     if func is None or not getattr(func, "_is_fixture", False):
         raise RuntimeError(f"нет фикстуры {name!r} в {module.__name__}")
 
-    with _call_with_fixtures(func, module, mp) as value:
+    with _call_with_fixtures(func, module, mp, cache) as value:
+        _remember(cache, name, value)
         yield value
 
 
+def _remember(cache: dict[str, Any] | None, name: str, value: Any) -> None:
+    if cache is not None:
+        cache[name] = value
+
+
 @contextmanager
-def _call_with_fixtures(func: Callable, module: ModuleType, mp: _MonkeyPatch) -> Iterator[Any]:
+def _call_with_fixtures(
+    func: Callable,
+    module: ModuleType,
+    mp: _MonkeyPatch,
+    cache: dict[str, Any] | None = None,
+) -> Iterator[Any]:
     """Вызвать функцию, подставив её аргументы-фикстуры (рекурсивно)."""
     params = [
         p
@@ -274,7 +307,7 @@ def _call_with_fixtures(func: Callable, module: ModuleType, mp: _MonkeyPatch) ->
 
     with ExitStack() as stack:
         kwargs = {
-            p.name: stack.enter_context(_resolve_fixture(p.name, module, mp))
+            p.name: stack.enter_context(_resolve_fixture(p.name, module, mp, cache))
             for p in params
         }
         result = func(**kwargs)
@@ -341,12 +374,17 @@ def _run_module(path: Path) -> tuple[int, int, list[str]]:
         for suffix, extra in _iter_cases(func):
             mp = _MonkeyPatch()
             label = f"{path.name}::{name}{suffix}"
+            # Кеш живёт ровно один тест: фикстура и сам тест, запросившие
+            # одно имя, должны получить одно значение — как в pytest.
+            cache: dict[str, Any] = {}
             try:
                 from contextlib import ExitStack
 
                 with ExitStack() as stack:
                     for fixture in autouse:
-                        stack.enter_context(_call_with_fixtures(fixture, module, mp))
+                        stack.enter_context(
+                            _call_with_fixtures(fixture, module, mp, cache)
+                        )
 
                     params = [
                         p.name
@@ -356,7 +394,7 @@ def _run_module(path: Path) -> tuple[int, int, list[str]]:
                     kwargs = dict(extra)
                     for pname in params:
                         kwargs[pname] = stack.enter_context(
-                            _resolve_fixture(pname, module, mp)
+                            _resolve_fixture(pname, module, mp, cache)
                         )
                     func(**kwargs)
                 passed += 1

@@ -5,14 +5,16 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-REPO_ROOT = ROOT.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+
+# Корень репозитория ищет _bootstrap по маркеру: папку модуля переносили,
+# и отсчёт «на уровень выше» после переезда указывал не туда.
+from _bootstrap import setup_paths
+
+setup_paths()
 
 from core.env import env, env_flag  # noqa: E402
 
