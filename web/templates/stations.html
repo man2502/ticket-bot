@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Справочники{% endblock %}
+
+{% block content %}
+<h1>Справочники</h1>
+
+{% if message %}
+  <div class="alert {{ 'error' if is_error else 'ok' }}">{{ message }}</div>
+{% endif %}
+
+<p class="muted small">
+  Списки хранятся локально: форма создания процесса должна открываться сразу
+  и работать, когда сайт перевозчика недоступен. Обновляйте, если появилась
+  новая станция или пропала старая.
+</p>
+
+{% for group in groups %}
+<section class="station-group">
+  <div class="page-head">
+    <h2>
+      {{ group.title }}
+      <span class="muted small">
+        — {{ group.active }} активн{{ 'ая' if group.active == 1 else 'ых' }}
+        {%- if group.stations|length != group.active %},
+          {{ group.stations|length - group.active }} скрыт{{ 'ая' if group.stations|length - group.active == 1 else 'ых' }}
+        {%- endif %}
+      </span>
+    </h2>
+    <form method="post" action="/stations/{{ group.service }}/sync" class="inline-form">
+      <button type="submit">Обновить</button>
+    </form>
+  </div>
+
+  <div class="muted small source-line">
+    Источник: <code>{{ group.source }}</code>
+    {% if group.synced_at %}
+      · обновлено {{ group.synced_at.strftime('%d.%m.%Y %H:%M') }}
+    {% endif %}
+    {# Поясняем, что за код: именно он уходит в настройки бота при запуске. #}
+    · код подставляется в маршрут процесса
+  </div>
+
+  {% if group.stations %}
+  <table class="grid">
+    <thead>
+      <tr>
+        <th style="width: 90px">Код</th>
+        <th>Название</th>
+        <th>По-английски</th>
+        <th style="width: 110px">Состояние</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in group.stations %}
+      <tr class="{{ '' if s.is_active else 'row-muted' }}">
+        <td><code>{{ s.code or s.external_id }}</code></td>
+        <td>{{ s.title_ru or s.title_en or s.external_id }}</td>
+        {# У аэропортов источник отдаёт одно название на оба поля — не дублируем. #}
+        <td class="muted">{{ s.title_en if s.title_en and s.title_en != s.title_ru else '—' }}</td>
+        <td>
+          {% if s.is_active %}
+            <span class="tag tag-ok">активна</span>
+          {% else %}
+            {# Не удаляем: на станцию могут ссылаться уже созданные процессы. #}
+            <span class="tag">нет в источнике</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="alert info">
+    Справочник пуст — нажмите «Обновить». Без него нельзя создать процесс поиска.
+  </div>
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}

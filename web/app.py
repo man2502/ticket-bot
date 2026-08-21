@@ -18,7 +18,7 @@ from web.auth import LoginRedirect
 from web.config import STATIC_DIR, ensure_dirs
 from web.db import get_session_factory, init_db
 from web.models import User
-from web.routes import auth, dashboard, passengers, users
+from web.routes import auth, dashboard, passengers, stations, users
 from web.security import read_session_token, SESSION_COOKIE
 from web.templating import render
 
@@ -31,13 +31,25 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(passengers.router)
+app.include_router(stations.router)
 app.include_router(users.router)
 
 
 @app.on_event("startup")
 def _on_startup() -> None:
-    """Таблицы создаются при первом запуске — отдельная команда миграции не нужна."""
+    """Таблицы и первичные справочники. Отдельная команда миграции не нужна."""
     init_db()
+
+    # Справочники тянем только если они пусты. Сети может не быть — панель
+    # обязана подняться в любом случае, обновить можно кнопкой.
+    from web.db import session_scope
+    from web.services.stations import ensure_stations
+
+    try:
+        with session_scope() as session:
+            ensure_stations(session)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[stations] первичная синхронизация пропущена: {exc}")
 
 
 @app.exception_handler(LoginRedirect)

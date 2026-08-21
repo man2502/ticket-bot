@@ -295,3 +295,25 @@ button.danger { background: var(--error); }
 
 .grid td a { color: var(--accent); text-decoration: none; }
 .grid td a:hover { text-decoration: underline; }
+
+/* ---------------------------------------------------- справочники */
+
+.station-group { margin-bottom: 40px; }
+.station-group .page-head { margin-bottom: 6px; }
+.station-group h2 { margin: 0; color: var(--text); }
+
+.source-line { margin-bottom: 12px; }
+
+code {
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 13px;
+  color: var(--accent);
+}
+
+/* Станция, пропавшая из источника. Не удаляем — на неё могут ссылаться
+   уже созданные процессы, поэтому просто приглушаем строку. */
+.row-muted td { opacity: 0.45; }
+
+.tag-ok { color: var(--ok); border-color: var(--ok); }
+
+.alert.ok { border-color: var(--ok); color: var(--ok); }

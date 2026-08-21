@@ -62,13 +62,6 @@ def bookings_page(request: Request, user: User = Depends(require_user)) -> HTMLR
     return _placeholder(request, user, "Брони", "Ссылки на оплату и разблокировка — этап 7.")
 
 
-@router.get("/stations", response_class=HTMLResponse)
-def stations_page(request: Request, user: User = Depends(require_admin)) -> HTMLResponse:
-    return _placeholder(
-        request, user, "Справочники", "Станции и порты, кнопка пересинхронизации — этап 3."
-    )
-
-
 @router.get("/captcha", response_class=HTMLResponse)
 def captcha_page(request: Request, user: User = Depends(require_admin)) -> HTMLResponse:
     return _placeholder(request, user, "Капчи", "Разметка нерешённых капч — этап 8.")
