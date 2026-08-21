@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Процессы{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Процессы</h1>
+  <div class="row-actions">
+    <a class="button-link" href="/jobs/new?service=railway">Поезд</a>
+    <a class="button-link" href="/jobs/new?service=airlines">Самолёт</a>
+  </div>
+</div>
+
+{# Очередь на сервис одна: два параллельных поиска с одного адреса — это бан,
+   а не вдвое больше шансов. Показываем, кто её занимает. #}
+{% for service, job_id in busy.items() %}
+  {% if job_id %}
+  <div class="alert info">
+    {{ service_titles[service] }}: сейчас работает
+    <a href="/jobs/{{ job_id }}">процесс #{{ job_id }}</a>.
+    Следующий по этому сервису можно запустить, когда он завершится.
+  </div>
+  {% endif %}
+{% endfor %}
+
+{% if jobs %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th>#</th><th>Сервис</th><th>Маршрут</th><th>Дата</th>
+      <th>Пассажиры</th><th>Статус</th><th>Создан</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for job in jobs %}
+    <tr>
+      <td><a href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
+      <td>{{ service_titles[job.service] }}</td>
+      <td>{{ job.source }} → {{ job.destination }}</td>
+      <td>{{ job.depart_date }}</td>
+      <td class="small">{{ job.passengers|length }}</td>
+      <td><span class="status status-{{ job.status }}">{{ job.status }}</span></td>
+      <td class="muted small">
+        {{ job.created_at.strftime('%d.%m %H:%M') }}
+        {% if user.is_admin and job.user %}<div>{{ job.user.login }}</div>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="alert info">
+  Процессов пока нет. Создайте поиск по <a href="/jobs/new?service=railway">поезду</a>
+  или <a href="/jobs/new?service=airlines">самолёту</a>.
+</div>
+{% endif %}
+{% endblock %}

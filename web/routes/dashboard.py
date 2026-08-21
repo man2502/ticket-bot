@@ -52,11 +52,6 @@ def _placeholder(request: Request, user: User, title: str, note: str) -> HTMLRes
     return render(request, "placeholder.html", user, title=title, note=note)
 
 
-@router.get("/jobs", response_class=HTMLResponse)
-def jobs_page(request: Request, user: User = Depends(require_user)) -> HTMLResponse:
-    return _placeholder(request, user, "Процессы", "Запуск поиска и живая консоль — этап 5-6.")
-
-
 @router.get("/bookings", response_class=HTMLResponse)
 def bookings_page(request: Request, user: User = Depends(require_user)) -> HTMLResponse:
     return _placeholder(request, user, "Брони", "Ссылки на оплату и разблокировка — этап 7.")

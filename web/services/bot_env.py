@@ -1,0 +1,234 @@
+"""Подготовка запуска бота: временный `check.env` и `passengers.json`.
+
+Боты не переписывались под панель — они по-прежнему читают настройки из файла
+окружения и список пассажиров из JSON. Панель просто готовит эти файлы из базы
+перед каждым запуском. Отлаженная логика антибота (тайминги слотов, ротация
+User-Agent, backoff, защита от повторной брони) при этом не трогается вовсе.
+
+Почему именно файл, а не переменные окружения процесса: внутри бота стоит
+`load_dotenv(path, override=True)`, и он перезаписал бы всё, что мы передали
+через `os.environ`. Файл — единственный способ говорить с ботом на его языке.
+
+Почта у бота намеренно НЕ настраивается: `GMAIL_*` не передаём, поэтому
+`gmail_configured()` вернёт False и бот только напечатает результат. Рассылает
+панель — у неё и настройки, и история отправок.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+from typing import Any
+
+from web.config import AIRLINES_API_DIR, RAILWAY_DIR, RUNS_DIR
+from web.models import Job, Service
+from web.services.settings import get_service_config, get_service_secret
+
+__all__ = [
+    "BotLaunch",
+    "prepare_launch",
+    "cleanup_run_dir",
+    "local_env_warning",
+    "SERVICE_DIRS",
+    "SERVICE_SCRIPTS",
+]
+
+SERVICE_DIRS = {
+    Service.RAILWAY.value: RAILWAY_DIR,
+    Service.AIRLINES.value: AIRLINES_API_DIR,
+}
+
+SERVICE_SCRIPTS = {
+    Service.RAILWAY.value: "railway_check.py",
+    Service.AIRLINES.value: "api_check.py",
+}
+
+# Журналы броней ботов: панель читает их после выхода процесса, чтобы узнать
+# номер брони и ссылку на оплату. Разбирать ради этого печать в консоль не нужно.
+SERVICE_JOURNALS = {
+    Service.RAILWAY.value: "railway_bookings.json",
+    Service.AIRLINES.value: "api_bookings.json",
+}
+
+
+class BotLaunch:
+    """Всё, что нужно, чтобы запустить бота: где, чем и с каким окружением."""
+
+    def __init__(self, *, service: str, run_dir: Path, env_file: Path, cwd: Path, script: Path):
+        self.service = service
+        self.run_dir = run_dir
+        self.env_file = env_file
+        self.cwd = cwd
+        self.script = script
+
+    @property
+    def args(self) -> list[str]:
+        """Аргументы после пути к интерпретатору."""
+        return [str(self.script), "--env", str(self.env_file)]
+
+    @property
+    def journal(self) -> Path:
+        return self.cwd / SERVICE_JOURNALS[self.service]
+
+
+def local_env_warning(service: str) -> str:
+    """
+    Предупредить, если рядом с ботом лежит `.env.local`.
+
+    Бот грузит его ПОСЛЕ нашего файла и с `override=True`, то есть значения
+    оттуда побеждают настройки панели. Для запусков из командной строки это
+    задумано, но человек должен знать, что панель тут не главная.
+    """
+    local = SERVICE_DIRS[service] / ".env.local"
+    if not local.exists():
+        return ""
+    return (
+        f"Внимание: {local} перекрывает настройки панели — "
+        f"бот читает его после нашего файла. Переименуйте, если это не нужно."
+    )
+
+
+def _format_env(values: dict[str, Any]) -> str:
+    """
+    Собрать содержимое `.env`.
+
+    Значения не экранируются кавычками намеренно: python-dotenv снял бы их,
+    и пароль с кавычкой внутри поехал бы. Все значения здесь однострочные,
+    переводы строк вырезаем.
+    """
+    lines = ["# Файл создан панелью автоматически. Правки будут затёрты."]
+    for key, value in values.items():
+        if value is None:
+            continue
+        text = str(value).replace("\r", " ").replace("\n", " ")
+        lines.append(f"{key}={text}")
+    return "\n".join(lines) + "\n"
+
+
+def _railway_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> dict[str, Any]:
+    config = get_service_config(db, Service.RAILWAY.value)
+    params = job.params
+
+    values: dict[str, Any] = {
+        "SOURCE_STATION_ID": job.source,
+        "DESTINATION_STATION_ID": job.destination,
+        "DATE": job.depart_date,
+        "PASSENGERS_FILE": passengers_file,
+        "PASSENGER_IDS": passenger_ids,
+        "RAILWAY_CHECK_AT_SEC": config.check_at_second,
+        "RAILWAY_AUTO_BOOK": "1" if config.auto_book else "0",
+        "RAILWAY_MULTIMEDIA": "1" if params.get("multimedia") else "0",
+        "RAILWAY_STRICT": "1" if params.get("strict") else "0",
+    }
+
+    # Тип вагона и выбор поезда — необязательные: без них бот смотрит все.
+    if params.get("wagon_type_id"):
+        values["WAGON_TYPE_ID"] = params["wagon_type_id"]
+    if params.get("train_index"):
+        values["TRAIN_INDEX"] = params["train_index"]
+    elif params.get("train_time"):
+        values["TRAIN_TIME"] = params["train_time"]
+    elif params.get("train_run_number"):
+        values["TRAIN_RUN_NUMBER"] = params["train_run_number"]
+
+    return values
+
+
+def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> dict[str, Any]:
+    config = get_service_config(db, Service.AIRLINES.value)
+    params = job.params
+
+    values: dict[str, Any] = {
+        "DEPART_PORT_CODE": job.source,
+        "ARRIVAL_PORT_CODE": job.destination,
+        "DATE": job.depart_date,
+        "PASSENGERS_FILE": passengers_file,
+        "PASSENGER_IDS": passenger_ids,
+        # Доступы: по ним бот сам получает и обновляет Bearer-токены.
+        "API_CUSTOMER_PHONE": config.login,
+        "API_CUSTOMER_PASSWORD": get_service_secret(db, Service.AIRLINES.value, "password_enc"),
+        "API_IOS_LOGIN": config.extra_login or "ios",
+        "API_IOS_PASSWORD": get_service_secret(db, Service.AIRLINES.value, "extra_password_enc"),
+        "API_AUTO_REFRESH_TOKENS": "1",
+        # Токены в .env.local не пишем: панель запускает бота из своего каталога
+        # и не должна править файлы модуля.
+        "API_SAVE_TOKENS": "0",
+        "API_CHECK_EVERY_00": "1" if config.slot_00_enabled else "0",
+        "API_CHECK_EVERY_30": "1" if config.slot_30_enabled else "0",
+        "API_AUTO_BOOK": "1" if config.auto_book else "0",
+        "API_RATE_LIMIT_PAUSE_SEC": config.rate_limit_pause_sec,
+        "API_REPEATED_ERROR_PAUSE_AFTER": config.repeated_error_pause_after,
+        # Капча: процесс не ждёт человека. Нерешённые уходят в раздел «Капчи».
+        "CAPTCHA_API_MANUAL": "1" if config.captcha_manual else "0",
+        "CAPTCHA_API_MAX_ATTEMPTS": config.captcha_max_attempts,
+        "CAPTCHA_API_COLLECT": "1",
+        "CAPTCHA_API_COLLECT_REJECTED": "1",
+        "FLIGHT_STRICT": "1" if params.get("strict") else "0",
+    }
+
+    if params.get("flight_time"):
+        values["FLIGHT_TIME"] = params["flight_time"]
+    else:
+        values["FLIGHT_INDEX"] = params.get("flight_index") or "1"
+
+    return values
+
+
+_BUILDERS = {
+    Service.RAILWAY.value: _railway_env,
+    Service.AIRLINES.value: _airlines_env,
+}
+
+
+def prepare_launch(db, job: Job) -> BotLaunch:
+    """
+    Разложить всё нужное для запуска в отдельный каталог процесса.
+
+    Каталог свой у каждого запуска: два процесса не должны драться за один
+    `passengers.json`, а после завершения остаётся ровно то, с чем бот работал,
+    — это сильно упрощает разбор «почему не сработало».
+    """
+    if job.service not in _BUILDERS:
+        raise ValueError(f"неизвестный сервис: {job.service!r}")
+
+    run_dir = RUNS_DIR / f"job-{job.id}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    passengers = [link.passenger.to_bot_dict() for link in sorted(job.passengers, key=lambda x: x.position)]
+    if not passengers:
+        raise ValueError("в процессе нет пассажиров")
+
+    passengers_file = run_dir / "passengers.json"
+    passengers_file.write_text(
+        json.dumps(passengers, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    passenger_ids = ",".join(str(p["id"]) for p in passengers)
+
+    values = _BUILDERS[job.service](db, job, passengers_file, passenger_ids)
+
+    env_file = run_dir / "check.env"
+    env_file.write_text(_format_env(values), encoding="utf-8")
+
+    cwd = SERVICE_DIRS[job.service]
+    return BotLaunch(
+        service=job.service,
+        run_dir=run_dir,
+        env_file=env_file,
+        cwd=cwd,
+        script=cwd / SERVICE_SCRIPTS[job.service],
+    )
+
+
+def cleanup_run_dir(job: Job) -> None:
+    """
+    Удалить каталог запуска.
+
+    Вызывается только по явной команде: там лежит `check.env` с паролями,
+    но там же лежит и всё, что нужно для разбора неудачного запуска.
+    """
+    if not job.run_dir:
+        return
+    path = Path(job.run_dir)
+    if path.exists() and path.is_dir() and path.parent == RUNS_DIR:
+        shutil.rmtree(path, ignore_errors=True)

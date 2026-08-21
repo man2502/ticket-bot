@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Процесс #{{ job.id }}{% endblock %}
+{% block main_class %}container wide{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>
+    Процесс #{{ job.id }}
+    <span class="status status-{{ job.status }}" id="job-status">{{ job.status }}</span>
+  </h1>
+  <div class="row-actions">
+    {% if job.status in ('queued', 'stopped', 'failed') %}
+      <form method="post" action="/jobs/{{ job.id }}/start" class="inline-form">
+        <button type="submit">Запустить</button>
+      </form>
+    {% endif %}
+    {% if running or job.status == 'running' %}
+      <form method="post" action="/jobs/{{ job.id }}/stop" class="inline-form">
+        <button type="submit" class="danger">Остановить</button>
+      </form>
+    {% endif %}
+    <form method="post" action="/jobs/{{ job.id }}/delete" class="inline-form"
+          onsubmit="return confirm('Удалить процесс #{{ job.id }} вместе с логами?')">
+      <button type="submit" class="secondary-btn">Удалить</button>
+    </form>
+    <a class="button-link secondary" href="/jobs">К списку</a>
+  </div>
+</div>
+
+{% if error %}
+  <div class="alert error">{{ error }}</div>
+{% endif %}
+
+{% if job.status == 'needs_review' %}
+  {# Самый опасный исход: подтверждение ушло, ответа нет. Повторный запуск
+     может создать вторую настоящую бронь и второй счёт. #}
+  <div class="alert error">
+    <strong>Бронь под вопросом.</strong>
+    Подтверждение было отправлено, но ответ не получен — бронь могла быть создана.
+    Проверьте список броней у перевозчика <em>перед</em> повторным запуском.
+    {% if job.error %}<div class="small">{{ job.error }}</div>{% endif %}
+  </div>
+{% endif %}
+
+{% if busy_with and busy_with != job.id %}
+  <div class="alert info">
+    По этому сервису работает <a href="/jobs/{{ busy_with }}">процесс #{{ busy_with }}</a> —
+    запустить второй нельзя.
+  </div>
+{% endif %}
+
+<div class="job-layout">
+  <!-- ------------------------------------------------- параметры слева -->
+  <section class="job-params">
+    <table class="grid">
+      <tbody>
+        <tr><th>Сервис</th><td>{{ service_title }}</td></tr>
+        <tr><th>Маршрут</th><td>{{ stations.source }} → {{ stations.destination }}</td></tr>
+        <tr><th>Дата</th><td>{{ job.depart_date }}</td></tr>
+        <tr>
+          <th>Пассажиры</th>
+          <td>
+            {% for link in job.passengers|sort(attribute='position') %}
+              <div>{{ link.passenger.last_name }} {{ link.passenger.first_name }}</div>
+            {% endfor %}
+          </td>
+        </tr>
+        {% for key, value in job.params.items() %}
+          {% if value not in ('', None, False) %}
+          <tr><th class="small">{{ key }}</th><td class="small">{{ value }}</td></tr>
+          {% endif %}
+        {% endfor %}
+        {% if job.notify_email or job.notify_phone %}
+        <tr>
+          <th>Сообщить</th>
+          <td class="small">{{ job.notify_email }} {{ job.notify_phone }}</td>
+        </tr>
+        {% endif %}
+        {% if job.started_at %}
+        <tr><th>Запущен</th><td class="small">{{ job.started_at.strftime('%d.%m %H:%M:%S') }}</td></tr>
+        {% endif %}
+        {% if job.finished_at %}
+        <tr><th>Завершён</th><td class="small">
+          {{ job.finished_at.strftime('%d.%m %H:%M:%S') }}
+          {% if job.exit_code is not none %}(код {{ job.exit_code }}){% endif %}
+        </td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </section>
+
+  <!-- --------------------------------------------------- консоль справа -->
+  <section class="console-box">
+    <div class="console-head">
+      <span>Консоль</span>
+      <label class="console-follow">
+        <input type="checkbox" id="follow" checked> прокручивать
+      </label>
+    </div>
+    <div class="console" id="console">
+      {% for log in logs %}
+        <div class="line line-{{ log.level }}">
+          <span class="ts">{{ log.ts.strftime('%H:%M:%S') }}</span>{{ log.text }}
+        </div>
+      {% else %}
+        <div class="line line-info"><span class="ts">—</span>Процесс ещё не запускался</div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  const box = document.getElementById('console');
+  const follow = document.getElementById('follow');
+  const statusEl = document.getElementById('job-status');
+
+  // Последняя показанная строка: при переподключении не покажем повторно то,
+  // что уже на экране.
+  const lines = box.querySelectorAll('.line[data-id]');
+  let lastId = lines.length ? Number(lines[lines.length - 1].dataset.id) : {{ logs[-1].id if logs else 0 }};
+
+  const scroll = () => { if (follow.checked) box.scrollTop = box.scrollHeight; };
+  scroll();
+
+  const status = "{{ job.status }}";
+  if (status !== 'running' && status !== 'queued') return;
+
+  const source = new EventSource(`/jobs/{{ job.id }}/stream?after=${lastId}`);
+
+  source.addEventListener('logs', (event) => {
+    for (const row of JSON.parse(event.data)) {
+      const div = document.createElement('div');
+      div.className = 'line line-' + row.level;
+      div.dataset.id = row.id;
+      const ts = document.createElement('span');
+      ts.className = 'ts';
+      ts.textContent = row.ts;
+      div.appendChild(ts);
+      // textContent, а не innerHTML: в лог попадает ответ чужого сервера,
+      // и вставлять его как разметку нельзя.
+      div.appendChild(document.createTextNode(row.text));
+      box.appendChild(div);
+      lastId = row.id;
+    }
+    scroll();
+  });
+
+  source.addEventListener('done', (event) => {
+    const data = JSON.parse(event.data);
+    statusEl.textContent = data.status;
+    statusEl.className = 'status status-' + data.status;
+    source.close();
+    // Кнопки зависят от статуса — перечитываем страницу целиком.
+    setTimeout(() => window.location.reload(), 800);
+  });
+})();
+</script>
+{% endblock %}

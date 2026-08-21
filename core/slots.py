@@ -22,6 +22,11 @@ __all__ = ["now_second", "seconds_until_second", "precise_sleep", "sleep_until_s
 
 _SPIN_WINDOW_SEC = 0.02
 
+# Максимальный кусок сна. Влияет не на точность, а на то, как быстро
+# бот заметит команду остановки: обработчик сигнала выполняется
+# только между вызовами time.sleep.
+_MAX_SLEEP_CHUNK_SEC = 0.5
+
 
 def now_second(now: dt.datetime | None = None) -> float:
     """Текущая секунда минуты с долями: 57.9 вместо 57."""
@@ -53,13 +58,27 @@ def seconds_until_second(
 
 
 def precise_sleep(delay: float) -> None:
-    """Спать `delay` секунд по монотонным часам, с точностью до пары миллисекунд."""
+    """
+    Спать `delay` секунд по монотонным часам, с точностью до пары миллисекунд.
+
+    Долгое ожидание разбито на короткие куски. Причина не в точности, а в
+    остановке: на Windows `time.sleep` не прерывается сигналом Ctrl+Break,
+    и обработчик выполняется только между вызовами. Одним куском на 60 секунд
+    бот переставал реагировать на команду «остановить» почти на минуту — и его
+    приходилось убивать, не дав дописать журнал броней.
+    """
     if delay <= 0:
         return
     deadline = time.monotonic() + delay
-    coarse = delay - _SPIN_WINDOW_SEC
-    if coarse > 0:
-        time.sleep(coarse)
+
+    while True:
+        coarse = deadline - _SPIN_WINDOW_SEC - time.monotonic()
+        if coarse <= 0:
+            break
+        time.sleep(min(_MAX_SLEEP_CHUNK_SEC, coarse))
+
+    # Последние миллисекунды — коротким спином: sleep регулярно просыпается
+    # на 5-20 мс позже, а слот этого не прощает.
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:

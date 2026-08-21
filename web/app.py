@@ -18,7 +18,15 @@ from web.auth import LoginRedirect
 from web.config import STATIC_DIR, ensure_dirs
 from web.db import get_session_factory, init_db
 from web.models import User
-from web.routes import auth, dashboard, passengers, settings as settings_routes, stations, users
+from web.routes import (
+    auth,
+    dashboard,
+    jobs,
+    passengers,
+    settings as settings_routes,
+    stations,
+    users,
+)
 from web.security import read_session_token, SESSION_COOKIE
 from web.templating import render
 
@@ -30,6 +38,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(auth.router)
 app.include_router(dashboard.router)
+app.include_router(jobs.router)
 app.include_router(passengers.router)
 app.include_router(settings_routes.router)
 app.include_router(stations.router)
@@ -51,6 +60,23 @@ def _on_startup() -> None:
             ensure_stations(session)
     except Exception as exc:  # noqa: BLE001
         print(f"[stations] первичная синхронизация пропущена: {exc}")
+
+    # Процессы не переживают остановку панели, а записи в базе остаются:
+    # без этого очередь сервиса оказалась бы занята навсегда.
+    from web.services.runner import recover_orphans
+
+    with session_scope() as session:
+        fixed = recover_orphans(session)
+        if fixed:
+            print(f"[runner] помечено остановленными после перезапуска: {fixed}")
+
+
+@app.on_event("shutdown")
+def _on_shutdown() -> None:
+    """Не оставлять ботов работать после закрытия панели."""
+    from web.services.runner import stop_all
+
+    stop_all()
 
 
 @app.exception_handler(LoginRedirect)

@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Новый процесс{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Новый поиск — {{ service_title|lower }}</h1>
+  <a class="button-link secondary" href="/jobs">К списку</a>
+</div>
+
+{% if errors %}
+  <div class="alert error">
+    {% for e in errors %}<div>{{ e }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+{% if missing %}
+  <div class="alert error">
+    Сервис не готов: не заполнено — {{ missing|join(', ') }}.
+    <a href="/settings">Открыть настройки</a>
+  </div>
+{% endif %}
+
+{% if not service_enabled %}
+  <div class="alert error">Сервис выключен в настройках — запустить процесс не выйдет.</div>
+{% endif %}
+
+{% if not stations %}
+  <div class="alert error">
+    Справочник пуст. <a href="/stations">Обновите его</a>, иначе маршрут не выбрать.
+  </div>
+{% endif %}
+
+<form method="post" action="/jobs/new" class="card-form">
+  <input type="hidden" name="service" value="{{ service }}">
+
+  <h2>Маршрут</h2>
+  <div class="field-grid">
+    <label>
+      Откуда <span class="req">*</span>
+      <select name="source" required>
+        <option value="">— выберите —</option>
+        {% for s in stations %}
+          <option value="{{ s.external_id }}" {% if form.source == s.external_id %}selected{% endif %}>
+            {{ s.title }}{% if s.code != s.external_id %} ({{ s.code }}){% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      Куда <span class="req">*</span>
+      <select name="destination" required>
+        <option value="">— выберите —</option>
+        {% for s in stations %}
+          <option value="{{ s.external_id }}" {% if form.destination == s.external_id %}selected{% endif %}>
+            {{ s.title }}{% if s.code != s.external_id %} ({{ s.code }}){% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      Дата <span class="req">*</span>
+      <input name="depart_date" value="{{ form.depart_date or '' }}" placeholder="ДД.ММ.ГГГГ" required>
+      <span class="field-hint">Тариф пассажиров считается на эту дату</span>
+    </label>
+  </div>
+
+  <h2>Пассажиры</h2>
+  {% if passengers %}
+  <p class="muted small">
+    Порядок отметки влияет на распределение мест. Ребёнок не поедет без взрослого.
+  </p>
+  <div class="pax-list">
+    {% for p in passengers %}
+    <label class="checkbox">
+      <input type="checkbox" name="passenger_ids" value="{{ p.id }}"
+             {% if p.id in (form.passenger_ids or []) %}checked{% endif %}>
+      {{ p.last_name }} {{ p.first_name }}
+      <span class="field-hint">{{ p.dob }} · {{ p.doc_number }}</span>
+    </label>
+    {% endfor %}
+  </div>
+  {% else %}
+    <div class="alert error">
+      Список пассажиров пуст. <a href="/passengers/new">Добавьте пассажира</a>.
+    </div>
+  {% endif %}
+
+  {% if service == 'railway' %}
+  <h2>Поезд и место</h2>
+  <div class="field-grid">
+    <label>
+      Тип вагона
+      <select name="wagon_type_id">
+        {% for value, title in wagon_types %}
+          <option value="{{ value }}" {% if form.wagon_type_id == value %}selected{% endif %}>{{ title }}</option>
+        {% endfor %}
+      </select>
+      <span class="field-hint">
+        «Плацкарт, иначе купе» — сначала ищем дешевле, потом дороже
+      </span>
+    </label>
+
+    <label>
+      Номер поезда в списке
+      <input name="train_index" value="{{ form.train_index or '' }}" placeholder="1">
+      <span class="field-hint">1 — первый по времени отправления. Пусто — любой</span>
+    </label>
+
+    <label>
+      Или время отправления
+      <input name="train_time" value="{{ form.train_time or '' }}" placeholder="19:50">
+      <span class="field-hint">Заполняйте что-то одно</span>
+    </label>
+  </div>
+
+  <label class="checkbox">
+    <input type="checkbox" name="multimedia" {% if form.multimedia %}checked{% endif %}>
+    Мультимедиа и Wi-Fi
+  </label>
+  {% else %}
+  <h2>Рейс</h2>
+  <div class="field-grid">
+    <label>
+      Номер рейса в списке
+      <input name="flight_index" value="{{ form.flight_index or '1' }}" placeholder="1">
+      <span class="field-hint">1 — первый по времени. Можно несколько: 2,1</span>
+    </label>
+
+    <label>
+      Или время вылета
+      <input name="flight_time" value="{{ form.flight_time or '' }}" placeholder="09:40">
+      <span class="field-hint">Заполняйте что-то одно</span>
+    </label>
+  </div>
+  {% endif %}
+
+  <label class="checkbox">
+    <input type="checkbox" name="strict" {% if form.strict %}checked{% endif %}>
+    Строго указанный рейс
+    <span class="field-hint">
+      Выключено — если на выбранном мест нет, возьмём другой подходящий
+    </span>
+  </label>
+
+  <h2>Куда сообщить</h2>
+  <p class="muted small">
+    Пусто — возьмём получателей из <a href="/settings">общих настроек</a>.
+  </p>
+  <div class="field-grid">
+    <label>
+      Email
+      <input name="notify_email" type="email" value="{{ form.notify_email or '' }}">
+    </label>
+    <label>
+      Телефон
+      <input name="notify_phone" value="{{ form.notify_phone or '' }}" placeholder="61234567">
+    </label>
+  </div>
+
+  {% if not auto_book %}
+  <div class="alert info">
+    Автобронь для этого сервиса выключена — процесс только сообщит о найденных
+    местах, но бронировать не будет. Включается в настройках.
+  </div>
+  {% endif %}
+
+  <div class="form-actions">
+    <button type="submit" {% if not passengers or not stations %}disabled{% endif %}>Создать</button>
+    <a class="button-link secondary" href="/jobs">Отмена</a>
+    <span class="muted small">После создания процесс нужно запустить кнопкой</span>
+  </div>
+</form>
+{% endblock %}
