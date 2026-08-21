@@ -163,6 +163,19 @@ def start_job(db, job: Job) -> None:
     if missing:
         raise JobStartError(f"Не заполнены доступы сервиса: {', '.join(missing)}")
 
+    # Незакрытая попытка брони в журнале — бот при запуске остановится сам.
+    # Говорим об этом заранее, иначе процесс просто завершится через секунду,
+    # и человек будет гадать, почему.
+    from web.services.bookings import blocking_attempt
+
+    blocker = blocking_attempt(job.service)
+    if blocker is not None:
+        raise JobStartError(
+            f"Автобронь заблокирована незакрытой попыткой ({blocker.status}, "
+            f"{blocker.started_at}). Проверьте брони у перевозчика и снимите "
+            f"блокировку в разделе «Брони»."
+        )
+
     try:
         launch = prepare_launch(db, job)
     except ValueError as exc:
@@ -320,8 +333,98 @@ def _finish(job_id: int, code: int) -> None:
             job.finished_at = dt.datetime.now()
             db.add(JobLog(job_id=job_id, level=level, text=message))
             db.commit()
+
+            _collect_bookings(db, job)
     except Exception as exc:  # noqa: BLE001
         print(f"[runner] job {job_id}: не записал итог: {exc}")
+
+
+def _collect_bookings(db, job: Job) -> None:
+    """
+    Подобрать результат брони из журнала бота и разослать ссылку на оплату.
+
+    Ссылку берём из журнала, а не из печати в консоль: там она лежит структурно,
+    рядом со статусом попытки, и не зависит от того, как бот её отформатировал.
+
+    Ошибки здесь не поднимаем: бронь уже создана, и падение на рассылке было бы
+    худшим из исходов — человек не узнал бы про ссылку вообще.
+    """
+    from web.services.bookings import sync_from_journal
+    from web.services.notifications import format_booking_message, notify_booking
+
+    try:
+        created = sync_from_journal(db, job)
+    except Exception as exc:  # noqa: BLE001
+        db.add(
+            JobLog(
+                job_id=job.id,
+                level=LogLevel.WARN.value,
+                text=f"Не удалось прочитать журнал броней: {exc}",
+            )
+        )
+        db.commit()
+        return
+
+    for booking in created:
+        db.add(
+            JobLog(
+                job_id=job.id,
+                level=LogLevel.OK.value if booking.status == "done" else LogLevel.WARN.value,
+                text=(
+                    f"Журнал броней: {booking.status}"
+                    + (f", номер {booking.booking_number}" if booking.booking_number else "")
+                    + (f", оплата {booking.payment_url}" if booking.payment_url else "")
+                ),
+            )
+        )
+    db.commit()
+
+    # Письмо шлём только по состоявшейся броне со ссылкой. Про «под вопросом»
+    # человек уже увидел предупреждение в карточке процесса — дублировать
+    # тревогу письмом со ссылкой, которой нет, смысла нет.
+    payable = [b for b in created if b.status == "done" and b.payment_url]
+    if not payable:
+        return
+
+    names = ", ".join(
+        f"{link.passenger.last_name} {link.passenger.first_name}"
+        for link in sorted(job.passengers, key=lambda x: x.position)
+    )
+    route = f"{job.source} → {job.destination}, {job.depart_date}"
+
+    for booking in payable:
+        subject, body, sms = format_booking_message(
+            route=route,
+            payment_url=booking.payment_url,
+            booking_number=booking.booking_number,
+            passengers=names,
+        )
+        try:
+            results = notify_booking(
+                db,
+                subject=subject,
+                body=body,
+                sms_text=sms,
+                email=job.notify_email,
+                phone=job.notify_phone,
+                booking_id=booking.id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            results = []
+            db.add(
+                JobLog(job_id=job.id, level=LogLevel.ERROR.value,
+                       text=f"Рассылка не удалась: {exc}")
+            )
+
+        for result in results:
+            db.add(
+                JobLog(
+                    job_id=job.id,
+                    level=LogLevel.OK.value if result.ok else LogLevel.ERROR.value,
+                    text=f"{result.channel}: {result.summary()}",
+                )
+            )
+        db.commit()
 
 
 # --------------------------------------------------------------------------- #

@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Брони{% endblock %}
+
+{% block content %}
+<h1>Брони</h1>
+
+{% if message %}
+  <div class="alert {{ 'error' if is_error else 'ok' }}">{{ message }}</div>
+{% endif %}
+
+{# Блокировка журнала — самое важное на странице: пока она есть, новый поиск
+   по этому сервису не запустится. #}
+{% for blocker in blockers %}
+<section class="card-form blocker">
+  <h2>{{ blocker.title }}: автобронь заблокирована</h2>
+
+  <table class="grid">
+    <tbody>
+      <tr><th>Состояние</th><td>{{ status_titles.get(blocker.record.status, blocker.record.status) }}</td></tr>
+      <tr><th>Начата</th><td>{{ blocker.record.started_at }}</td></tr>
+      {% if blocker.record.booking_number %}
+      <tr><th>Номер брони</th><td>{{ blocker.record.booking_number }}</td></tr>
+      {% endif %}
+      {% if blocker.record.form_url %}
+      <tr><th>Оплата</th><td><a href="{{ blocker.record.form_url }}" target="_blank" rel="noopener">{{ blocker.record.form_url }}</a></td></tr>
+      {% endif %}
+      {% if blocker.record.detail %}
+      <tr><th>Детали</th><td class="small">{{ blocker.record.detail }}</td></tr>
+      {% endif %}
+      <tr><th>Журнал</th><td class="small muted">{{ blocker.journal }}</td></tr>
+    </tbody>
+  </table>
+
+  {% if blocker.record.status == 'unknown' or blocker.record.status == 'pending' %}
+  <div class="alert error">
+    <strong>Бронь могла быть создана.</strong>
+    Подтверждение ушло, но ответа не было. Откройте личный кабинет перевозчика
+    и посмотрите, нет ли там лишней брони. Снять блокировку, не проверив, —
+    значит рискнуть вторым счётом на тех же пассажиров.
+  </div>
+  {% else %}
+  <div class="alert info">
+    Бронь создана. Блокировка снимается, когда вы закончили с этой бронью
+    и готовы искать заново.
+  </div>
+  {% endif %}
+
+  {% if user.is_admin %}
+  <form method="post" action="/bookings/unblock" class="test-row">
+    <input type="hidden" name="service" value="{{ blocker.service }}">
+    <label>
+      Впишите «снять», чтобы подтвердить
+      <input name="confirm" placeholder="снять" autocomplete="off">
+    </label>
+    <button type="submit" class="danger">Снять блокировку</button>
+  </form>
+  {% else %}
+  <p class="muted small">Снять блокировку может только администратор.</p>
+  {% endif %}
+</section>
+{% endfor %}
+
+{% if bookings %}
+<h2>История</h2>
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Когда</th><th>Процесс</th><th>Сервис</th><th>Состояние</th>
+      <th>Номер</th><th>Оплата</th><th>Уведомление</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for b in bookings %}
+    <tr>
+      <td class="muted small">{{ b.created_at.strftime('%d.%m %H:%M') }}</td>
+      <td><a href="/jobs/{{ b.job_id }}">#{{ b.job_id }}</a></td>
+      <td class="small">{{ service_titles.get(b.service, b.service) }}</td>
+      <td>
+        <span class="tag {{ 'tag-ok' if b.status == 'done' else ('tag-error' if b.status in ('unknown', 'pending') else '') }}">
+          {{ status_titles.get(b.status, b.status) }}
+        </span>
+      </td>
+      <td class="small">{{ b.booking_number or '—' }}</td>
+      <td class="small">
+        {% if b.payment_url %}
+          <a href="{{ b.payment_url }}" target="_blank" rel="noopener">открыть</a>
+        {% else %}
+          <span class="muted">—</span>
+        {% endif %}
+      </td>
+      <td class="small">
+        {% set log = sends.get(b.id) %}
+        {% if log %}
+          {% if log.is_sent %}
+            <span class="tag tag-ok">ушло</span>
+          {% else %}
+            <span class="tag tag-error" title="{{ log.error }}">не ушло</span>
+          {% endif %}
+        {% else %}
+          <span class="muted">—</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if b.payment_url %}
+        <form method="post" action="/bookings/{{ b.id }}/resend" class="inline-form">
+          <button type="submit" class="secondary-btn">Отправить снова</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p class="muted small">
+  Оплату проводите на сайте банка сами — панель только доводит до ссылки.
+</p>
+{% elif not blockers %}
+<div class="alert info">
+  Броней пока нет. Они появятся здесь после того, как процесс поиска найдёт
+  места и оформит бронь.
+</div>
+{% endif %}
+{% endblock %}

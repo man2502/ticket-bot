@@ -442,3 +442,12 @@ code {
 .line-ok { color: var(--ok); }
 .line-warn { color: var(--warn); }
 .line-error { color: var(--error); }
+
+/* -------------------------------------------------------------- брони */
+
+/* Блокировка журнала — то, ради чего человек сюда чаще всего и заходит. */
+.blocker { border-color: var(--warn); }
+.blocker h2 { color: var(--warn); }
+.blocker .grid th { width: 130px; text-transform: none; font-size: 13px; }
+
+.grid a[target="_blank"] { color: var(--accent); }

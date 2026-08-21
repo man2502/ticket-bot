@@ -52,11 +52,6 @@ def _placeholder(request: Request, user: User, title: str, note: str) -> HTMLRes
     return render(request, "placeholder.html", user, title=title, note=note)
 
 
-@router.get("/bookings", response_class=HTMLResponse)
-def bookings_page(request: Request, user: User = Depends(require_user)) -> HTMLResponse:
-    return _placeholder(request, user, "Брони", "Ссылки на оплату и разблокировка — этап 7.")
-
-
 @router.get("/captcha", response_class=HTMLResponse)
 def captcha_page(request: Request, user: User = Depends(require_admin)) -> HTMLResponse:
     return _placeholder(request, user, "Капчи", "Разметка нерешённых капч — этап 8.")
