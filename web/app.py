@@ -18,7 +18,7 @@ from web.auth import LoginRedirect
 from web.config import STATIC_DIR, ensure_dirs
 from web.db import get_session_factory, init_db
 from web.models import User
-from web.routes import auth, dashboard, passengers, stations, users
+from web.routes import auth, dashboard, passengers, settings as settings_routes, stations, users
 from web.security import read_session_token, SESSION_COOKIE
 from web.templating import render
 
@@ -31,6 +31,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(passengers.router)
+app.include_router(settings_routes.router)
 app.include_router(stations.router)
 app.include_router(users.router)
 

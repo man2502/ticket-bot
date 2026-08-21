@@ -102,6 +102,7 @@ def _seed_defaults() -> None:
         "sms_url": ("", False),
         "sms_api_key": ("", True),
         "sms_api_key_field": ("api_key", False),
+        "sms_api_key_place": ("body", False),
         "sms_phone_field": ("phone", False),
         "sms_message_field": ("message", False),
         # Куда слать ссылку на оплату, если в процессе не задано своё.

@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block title %}Настройки{% endblock %}
+
+{# Поле секрета. Сохранённое значение в HTML не попадает никогда — только
+   признак «задан»: иначе пароль можно было бы прочитать в исходном коде. #}
+{% macro secret_field(name, label, is_set, hint='') %}
+  <label>
+    {{ label }}
+    <input name="{{ name }}" type="password" autocomplete="new-password"
+           placeholder="{{ 'сохранён — оставьте пустым' if is_set else 'не задан' }}">
+    <span class="field-hint">
+      {% if hint %}{{ hint }}<br>{% endif %}
+      Пустое поле — не менять. Стереть — поставьте дефис.
+    </span>
+  </label>
+{% endmacro %}
+
+{% macro text_field(name, label, value, hint='', type='text') %}
+  <label>
+    {{ label }}
+    <input name="{{ name }}" type="{{ type }}" value="{{ value or '' }}">
+    {% if hint %}<span class="field-hint">{{ hint }}</span>{% endif %}
+  </label>
+{% endmacro %}
+
+{% block content %}
+<h1>Настройки</h1>
+
+{% if message %}
+  <div class="alert {{ 'error' if is_error else 'ok' }}">{{ message }}</div>
+{% endif %}
+
+<!-- ------------------------------------------------------------- почта -->
+<section class="card-form">
+  <div class="page-head">
+    <h2>Почта</h2>
+    <span class="tag {{ 'tag-ok' if smtp_ready else '' }}">
+      {{ 'настроена' if smtp_ready else 'не настроена' }}
+    </span>
+  </div>
+
+  <form method="post" action="/settings/smtp">
+    <div class="field-grid">
+      {{ text_field('smtp_host', 'SMTP-сервер', values.smtp_host, 'Для Gmail: smtp.gmail.com') }}
+      {{ text_field('smtp_port', 'Порт', values.smtp_port, '587 — STARTTLS, 465 — SSL') }}
+      {{ text_field('smtp_user', 'Пользователь', values.smtp_user, 'Обычно полный адрес почты') }}
+      {{ secret_field('smtp_password', 'Пароль', values.smtp_password_set,
+                      'Для Gmail нужен пароль приложения, не обычный') }}
+      {{ text_field('smtp_from', 'Отправитель', values.smtp_from, 'Пусто — тот же, что пользователь') }}
+    </div>
+    <div class="form-actions">
+      <button type="submit">Сохранить</button>
+    </div>
+  </form>
+
+  {# Проверка отдельной формой: неверный пароль должен обнаружиться сейчас,
+     а не в момент, когда бронь создана и ссылка на оплату не дошла. #}
+  <form method="post" action="/settings/smtp/test" class="test-row">
+    <label>
+      Проверить отправку
+      <input name="to" type="email" placeholder="{{ values.default_notify_email or 'адрес получателя' }}">
+    </label>
+    <button type="submit" class="secondary-btn">Отправить тест</button>
+  </form>
+</section>
+
+<!-- --------------------------------------------------------------- SMS -->
+<section class="card-form">
+  <div class="page-head">
+    <h2>SMS-шлюз</h2>
+    <span class="tag {{ 'tag-ok' if sms_ready else '' }}">
+      {{ 'настроен' if sms_ready else 'не настроен' }}
+    </span>
+  </div>
+
+  <p class="muted small">
+    Панель отправляет <code>POST</code> с телом JSON. Имена полей и способ
+    передачи ключа зависят от провайдера — задайте их здесь.
+    Адрес должен быть <code>https</code>: ключ не должен уходить открытым текстом.
+  </p>
+
+  <form method="post" action="/settings/sms">
+    <div class="field-grid">
+      {{ text_field('sms_url', 'Адрес шлюза', values.sms_url, 'https://sms.example.tm/send', type='url') }}
+      {{ text_field('sms_phone_field', 'Поле номера', values.sms_phone_field, 'По умолчанию: phone') }}
+      {{ text_field('sms_message_field', 'Поле текста', values.sms_message_field, 'По умолчанию: message') }}
+      {{ secret_field('sms_api_key', 'Ключ API', values.sms_api_key_set, 'Необязателен') }}
+      {{ text_field('sms_api_key_field', 'Имя параметра ключа', values.sms_api_key_field, 'Напр. api_key') }}
+
+      <label>
+        Ключ передавать
+        <select name="sms_api_key_place">
+          {% for value, title in api_key_places %}
+            <option value="{{ value }}"
+              {% if (values.sms_api_key_place or 'body') == value %}selected{% endif %}>{{ title }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button type="submit">Сохранить</button>
+    </div>
+  </form>
+
+  <form method="post" action="/settings/sms/test" class="test-row">
+    <label>
+      Проверить отправку
+      <input name="phone" placeholder="{{ values.default_notify_phone or '61234567' }}">
+    </label>
+    <button type="submit" class="secondary-btn">Отправить тест</button>
+  </form>
+</section>
+
+<!-- ------------------------------------------------------- получатели -->
+<section class="card-form">
+  <h2>Получатели по умолчанию</h2>
+  <p class="muted small">
+    Куда слать ссылку на оплату, если в процессе не задан свой получатель.
+  </p>
+  <form method="post" action="/settings/recipients">
+    <div class="field-grid">
+      {{ text_field('default_notify_email', 'Email', values.default_notify_email,
+                    'Можно несколько через запятую', type='email') }}
+      {{ text_field('default_notify_phone', 'Телефон', values.default_notify_phone,
+                    'Приведём к виду +993…') }}
+    </div>
+    <div class="form-actions">
+      <button type="submit">Сохранить</button>
+    </div>
+  </form>
+</section>
+
+<!-- ---------------------------------------------------------- сервисы -->
+{% for svc in services %}
+<section class="card-form">
+  <div class="page-head">
+    <h2>{{ svc.title }}</h2>
+    <span class="tag {{ 'tag-ok' if svc.is_enabled and not svc.missing else '' }}">
+      {% if not svc.is_enabled %}выключен
+      {% elif svc.missing %}не хватает доступов
+      {% else %}готов{% endif %}
+    </span>
+  </div>
+
+  {% if svc.missing %}
+    <div class="alert error">Не заполнено: {{ svc.missing|join(', ') }}</div>
+  {% endif %}
+
+  <form method="post" action="/settings/service/{{ svc.service }}">
+    <label class="checkbox">
+      <input type="checkbox" name="is_enabled" {% if svc.is_enabled %}checked{% endif %}>
+      Сервис включён
+    </label>
+
+    {% if svc.needs_auth %}
+    <h3>Доступ</h3>
+    <div class="field-grid">
+      {{ text_field('login', 'Телефон личного кабинета', svc.login, 'Как при входе в приложение T5') }}
+      {{ secret_field('password', 'Пароль личного кабинета', svc.password_set) }}
+      {{ text_field('extra_login', 'Логин приложения', svc.extra_login, 'Обычно: ios') }}
+      {{ secret_field('extra_password', 'Пароль приложения', svc.extra_password_set,
+                      'По нему бот сам получает и обновляет токены') }}
+    </div>
+    {% else %}
+    <p class="muted small">Авторизация не требуется — API открытый.</p>
+    {% endif %}
+
+    <h3>Когда проверять</h3>
+    <p class="muted small">
+      Свободного интервала здесь нет намеренно: боты стреляют в фиксированные
+      секунды минуты с небольшим разбросом. Произвольный интервал — прямой путь
+      к бану вместо билета.
+    </p>
+    <div class="field-grid">
+      <label class="checkbox">
+        <input type="checkbox" name="slot_00_enabled" {% if svc.slot_00_enabled %}checked{% endif %}>
+        Окно на :00
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" name="slot_30_enabled" {% if svc.slot_30_enabled %}checked{% endif %}>
+        Окно на :30
+      </label>
+      {{ text_field('check_at_second', 'Секунда первого окна', svc.check_at_second, '0–59') }}
+    </div>
+
+    <h3>Ограничители</h3>
+    <div class="field-grid">
+      {{ text_field('max_searches_per_hour', 'Поисков в час', svc.max_searches_per_hour, '0 — без лимита') }}
+      {{ text_field('rate_limit_pause_sec', 'Пауза после 429, сек', svc.rate_limit_pause_sec, 'Не меньше 30') }}
+      {{ text_field('repeated_error_pause_after', 'Пауза после N одинаковых ошибок',
+                    svc.repeated_error_pause_after) }}
+    </div>
+
+    {% if svc.has_captcha %}
+    <h3>Капча</h3>
+    <div class="field-grid">
+      {{ text_field('captcha_max_attempts', 'Попыток за цикл', svc.captcha_max_attempts) }}
+      <label class="checkbox">
+        <input type="checkbox" name="captcha_manual" {% if svc.captcha_manual %}checked{% endif %}>
+        Ручной ввод в терминале
+        <span class="field-hint">
+          Оставьте выключенным: процесс не должен ждать человека. Нерешённые
+          капчи попадают в раздел «Капчи» для разметки.
+        </span>
+      </label>
+    </div>
+    {% endif %}
+
+    <h3>Бронирование</h3>
+    <label class="checkbox">
+      <input type="checkbox" name="auto_book" {% if svc.auto_book %}checked{% endif %}>
+      Бронировать автоматически
+      <span class="field-hint">
+        Выключено — только уведомление о найденных местах, без брони.
+      </span>
+    </label>
+
+    <div class="form-actions">
+      <button type="submit">Сохранить</button>
+    </div>
+  </form>
+</section>
+{% endfor %}
+
+<!-- ------------------------------------------------------ история -->
+{% if recent_sends %}
+<h2>Последние отправки</h2>
+<table class="grid">
+  <thead>
+    <tr><th>Когда</th><th>Канал</th><th>Кому</th><th>Результат</th></tr>
+  </thead>
+  <tbody>
+    {% for log in recent_sends %}
+    <tr>
+      <td class="muted small">{{ log.created_at.strftime('%d.%m %H:%M') }}</td>
+      <td>{{ 'почта' if log.channel == 'email' else 'SMS' }}</td>
+      <td class="small">{{ log.recipient }}</td>
+      <td class="small">
+        {% if log.is_sent %}
+          <span class="tag tag-ok">доставлено</span>
+        {% else %}
+          <span class="tag tag-error">{{ log.error or 'ошибка' }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

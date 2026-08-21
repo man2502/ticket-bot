@@ -67,8 +67,3 @@ def captcha_page(request: Request, user: User = Depends(require_admin)) -> HTMLR
     return _placeholder(request, user, "Капчи", "Разметка нерешённых капч — этап 8.")
 
 
-@router.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request, user: User = Depends(require_admin)) -> HTMLResponse:
-    return _placeholder(
-        request, user, "Настройки", "SMTP, SMS-шлюз, параметры сервисов — этап 4."
-    )
