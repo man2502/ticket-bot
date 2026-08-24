@@ -279,3 +279,66 @@ def test_explicit_agent_survives_when_rotation_off(sent: list) -> None:
         rotate_user_agent=False,
     )
     assert sent[-1][1]["user-agent"] == "Custom/1.0"
+
+
+# --------------------------------------------------------------------------
+# Объяснение отказа на входе
+# --------------------------------------------------------------------------
+
+BACKSLASH = chr(92)
+
+
+def test_401_explains_which_account_was_rejected() -> None:
+    """
+    Сервер отвечает на неверный пароль пустым телом.
+
+    Голое «HTTP 401: []» не говорит человеку ничего — и особенно не говорит,
+    что отвергнут пароль учётки приложения, а не личного кабинета.
+    """
+    from api_auth import _login_error
+
+    text = _login_error(401, [], "ios", "wrongpass")
+    assert "учётки приложения" in text
+    assert "НЕ пароль вашего личного кабинета" in text
+
+
+def test_401_hints_at_doubled_backslash() -> None:
+    """
+    Пароль скопировали из экспорта коллекции, где слеш экранирован.
+
+    Самая частая причина отказа: в настоящем пароле слеш один, а в поле
+    уехали оба символа.
+    """
+    from api_auth import _login_error
+
+    doubled = "]*" + BACKSLASH * 2 + "d6)RrG{rVY:6H"
+    assert "двойной обратный слеш" in _login_error(401, [], "ios", doubled)
+
+
+def test_no_backslash_hint_when_password_is_clean() -> None:
+    from api_auth import _login_error
+
+    assert "двойной обратный слеш" not in _login_error(401, [], "ios", "plainpass")
+
+
+def test_401_hints_at_stray_spaces() -> None:
+    from api_auth import _login_error
+
+    assert "пробелы" in _login_error(401, [], "ios", " secret ")
+
+
+def test_password_itself_is_never_printed() -> None:
+    """В сообщение уходит длина, но не значение: оно попадёт в логи процесса."""
+    from api_auth import _login_error
+
+    secret = "s3cret-do-not-leak"
+    text = _login_error(401, [], "ios", secret)
+    assert secret not in text
+    assert str(len(secret)) in text
+
+
+def test_other_statuses_keep_raw_answer() -> None:
+    """Не 401 — причина неизвестна, показываем ответ как есть."""
+    from api_auth import _login_error
+
+    assert "oops" in _login_error(500, {"message": "oops"}, "ios", "x")

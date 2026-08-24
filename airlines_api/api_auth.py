@@ -160,6 +160,36 @@ def _auth_request(
     return response.status, response.body  # type: ignore[return-value]
 
 
+def _login_error(status: int, body: Any, login: str, password: str) -> str:
+    """
+    Понятное объяснение отказа на auth/login.
+
+    Сервер отвечает на неверный пароль пустым телом (`[]`), поэтому голое
+    «HTTP 401: []» не говорит человеку ничего. А причина почти всегда одна
+    и та же — пароль учётки приложения введён с ошибкой.
+    """
+    if status != 401:
+        return f"auth/login → HTTP {status}: {body}"
+
+    hints = [
+        f"auth/login → HTTP 401: сервер отверг пароль учётки приложения "
+        f"(логин {login!r}, пароль {len(password)} симв.)",
+        "Это НЕ пароль вашего личного кабинета — у приложения своя учётка.",
+    ]
+
+    # Самая частая ошибка: значение скопировали из экспорта Insomnia или JSON,
+    # где обратный слеш экранирован, и в пароль уехали оба символа.
+    if "\\\\" in password:
+        hints.append(
+            "В пароле есть двойной обратный слеш. Если вы копировали его из "
+            "файла коллекции, там он экранирован — в настоящем пароле слеш один."
+        )
+    if password != password.strip():
+        hints.append("По краям пароля есть пробелы — вероятно, лишние.")
+
+    return " ".join(hints)
+
+
 def _token_from_body(body: dict[str, Any] | str) -> str:
     if not isinstance(body, dict):
         raise RuntimeError(f"login: не JSON-объект: {body!r}")
@@ -255,14 +285,15 @@ def refresh_app_token(
         raise AuthFatalError("client token expired and API_IOS_PASSWORD not set")
 
     ios_login = env("API_IOS_LOGIN", "ios") or "ios"
+    password = env("API_IOS_PASSWORD")
     status, body = _auth_request(
         "POST",
         "auth/login",
         headers=_client_login_headers(),
-        body={"login": ios_login, "password": env("API_IOS_PASSWORD")},
+        body={"login": ios_login, "password": password},
     )
     if status != 200:
-        raise AuthFatalError(f"auth/login → HTTP {status}: {body}")
+        raise AuthFatalError(_login_error(status, body, ios_login, password))
 
     app_token = _token_from_body(body)
     if verbose:
