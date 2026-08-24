@@ -671,3 +671,120 @@ def test_successful_gateway_answers_are_accepted(
     _capture_with_body(monkeypatch, payload)
 
     assert send_sms(db, phone="+99361234567", message="Привет").ok is True
+
+
+# --------------------------------------------------------------------------- #
+# Расписание проверок
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("period", [10, 30, 60, 120])
+def test_allowed_period_is_saved(db, period: int) -> None:
+    from web.services.settings import save_service_config
+
+    config = save_service_config(db, "railway", {"check_period_sec": str(period)})
+    assert config.check_period_sec == period
+
+
+@pytest.mark.parametrize("given", ["45", "1", "0", "быстро", ""])
+def test_odd_period_keeps_previous(db, given: str) -> None:
+    """
+    Период не подгоняется к ближайшему разрешённому.
+
+    45 секунд — ровная сетка, которой у живого человека не бывает. Молча
+    превратить её в 30 значит оставить человека в уверенности, что он настроил
+    то, чего бот никогда не делал.
+    """
+    from web.services.settings import save_service_config
+
+    save_service_config(db, "airlines", {"check_period_sec": "120"})
+    config = save_service_config(db, "airlines", {"check_period_sec": given})
+    assert config.check_period_sec == 120
+
+
+def test_schedule_reaches_the_template(db) -> None:
+    from web.services.settings import save_service_config, service_config_view
+
+    save_service_config(db, "railway", {"check_period_sec": "10", "check_at_second": "7"})
+    view = service_config_view(db, "railway")
+
+    assert view["check_period_sec"] == 10
+    assert view["slot_marks"] == ":07, :17, :27, :37, :47, :57"
+    assert [value for value, _label in view["period_options"]] == [10, 30, 60, 120]
+
+
+def test_slow_period_marks_mention_minutes(db) -> None:
+    """«:00» без пояснения читалось бы как «раз в минуту»."""
+    from web.services.settings import save_service_config, service_config_view
+
+    save_service_config(db, "airlines", {"check_period_sec": "120"})
+    assert "2 мин" in service_config_view(db, "airlines")["slot_marks"]
+
+
+def test_old_database_gets_the_new_column(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    База, созданная до появления периода, должна пережить обновление панели.
+
+    `create_all` умеет создавать таблицы, но не менять их: без миграции
+    у человека со старой базой панель падала бы на первом же открытии настроек.
+    """
+    import sqlite3
+
+    import web.config as config
+    import web.crypto as crypto
+    import web.db as db_module
+
+    old_db = tmp_path / "old.db"
+    con = sqlite3.connect(old_db)
+    con.executescript(
+        """
+        CREATE TABLE service_configs (
+            service VARCHAR(16) NOT NULL PRIMARY KEY,
+            is_enabled BOOLEAN NOT NULL,
+            login VARCHAR(64) NOT NULL,
+            password_enc TEXT NOT NULL,
+            extra_login VARCHAR(64) NOT NULL,
+            extra_password_enc TEXT NOT NULL,
+            check_at_second INTEGER NOT NULL,
+            slot_00_enabled BOOLEAN NOT NULL,
+            slot_30_enabled BOOLEAN NOT NULL,
+            max_searches_per_hour INTEGER NOT NULL,
+            repeated_error_pause_after INTEGER NOT NULL,
+            rate_limit_pause_sec INTEGER NOT NULL,
+            captcha_manual BOOLEAN NOT NULL,
+            captcha_max_attempts INTEGER NOT NULL,
+            auto_book BOOLEAN NOT NULL,
+            updated_at DATETIME NOT NULL
+        );
+        INSERT INTO service_configs VALUES
+            ('airlines', 1, '', '', '', '', 0, 1, 1, 0, 3, 150, 0, 5, 1, '2026-08-20 12:00:00'),
+            ('railway',  1, '', '', '', '', 0, 1, 0, 0, 3,  60, 0, 5, 1, '2026-08-20 12:00:00');
+        """
+    )
+    con.commit()
+    con.close()
+
+    monkeypatch.setenv("TICKET_DB_PATH", str(old_db))
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(crypto, "SECRET_KEY_FILE", tmp_path / "secret.key")
+    monkeypatch.setattr(crypto, "SESSION_KEY_FILE", tmp_path / "session.key")
+    monkeypatch.delenv("TICKET_SECRET_KEY", raising=False)
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_SessionFactory", None)
+
+    db_module.init_db()
+
+    con = sqlite3.connect(old_db)
+    columns = {row[1] for row in con.execute("PRAGMA table_info(service_configs)")}
+    rows = dict(con.execute("SELECT service, check_period_sec FROM service_configs"))
+    con.close()
+
+    assert "check_period_sec" in columns
+    # Старые колонки NOT NULL без значения по умолчанию: пока они есть,
+    # вставка новой строки конфигурации падала бы на них.
+    assert not {"slot_00_enabled", "slot_30_enabled"} & columns
+    # Обе галочки — дважды в минуту.
+    assert rows["airlines"] == 30
+    # У railway галочки до бота не доезжали: он всегда ходил дважды в минуту,
+    # и обновление панели не должно молча вдвое замедлить поиск.
+    assert rows["railway"] == 30

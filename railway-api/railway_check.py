@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import random
 import sys
@@ -25,7 +26,15 @@ from core.bootstrap import bootstrap
 bootstrap(__file__)
 
 from core.booking_guard import BookingGuard
-from core.slots import now_second, precise_sleep, seconds_until_second
+from core.slots import (
+    is_slot_minute,
+    normalize_check_period,
+    now_second,
+    precise_sleep,
+    seconds_until_second,
+    slot_anchors,
+    slot_minute_stride,
+)
 from core.state import load_json, save_json
 from notify_helper import (
     flush_notifications,
@@ -72,8 +81,9 @@ from railway_trips import (
 STATE_FILE = RAILWAY_ROOT / "railway_state.json"
 
 
-SECOND_SLOT_SEC_MIN = 28
-SECOND_SLOT_SEC_MAX = 32
+# Разброс вокруг отметки для второго и следующих слотов минуты. При периоде
+# 30 с это даёт прежние :28–:32 — ровная сетка запросов слишком приметна.
+SECONDARY_SLOT_SPREAD_SEC = 2
 
 # Насколько секунд опоздание всё ещё считается попаданием в слот.
 SLOT_GRACE_SEC = 0.5
@@ -82,10 +92,28 @@ WARMUP_LEAD_SEC = 1.0
 
 
 def check_at_second() -> int:
+    """Секунда первого окна: RAILWAY_CHECK_AT_SEC, 0–59."""
     try:
         return max(0, min(59, int(env("RAILWAY_CHECK_AT_SEC", "0") or "0")))
     except ValueError:
         return 0
+
+
+def check_period_sec() -> int:
+    """
+    Как часто проверять: 10 / 30 / 60 / 120 секунд (RAILWAY_CHECK_PERIOD_SEC).
+
+    Раньше расписание было зашито в код: первый запрос в :00, второй где-то
+    между :28 и :32, и панель на него не влияла — хотя галочки в форме
+    показывала. Теперь расписание задаётся отсюда, а прежнее поведение —
+    это ровно период 30 с.
+    """
+    return normalize_check_period(env("RAILWAY_CHECK_PERIOD_SEC"))
+
+
+def slot_seconds() -> list[int]:
+    """Отметки текущего расписания: [0, 30] или, например, [7, 17, 27, 37, 47, 57]."""
+    return slot_anchors(check_period_sec(), check_at_second())
 
 
 def first_slot_jitter_sec() -> float:
@@ -93,52 +121,70 @@ def first_slot_jitter_sec() -> float:
     return random.choice((0.0, 0.1, 0.2))
 
 
-def second_check_second() -> int:
-    """Второй запрос в минуте — случайная секунда между 28 и 32."""
-    return random.randint(SECOND_SLOT_SEC_MIN, SECOND_SLOT_SEC_MAX)
-
-
-def plan_slot(slot: int) -> tuple[str, float, str]:
+def slot_jitter_sec(index: int) -> float:
     """
-    План для слота: (action, delay, label).
+    Сдвиг относительно отметки.
+
+    Первый слот круга сдвигается только вперёд и на доли секунды: он гонится
+    за моментом открытия продаж, и опоздание там дороже приметности. Остальные
+    гуляют в обе стороны на пару секунд — им спешить некуда.
+    """
+    if index == 0:
+        return first_slot_jitter_sec()
+    return float(random.randint(-SECONDARY_SLOT_SPREAD_SEC, SECONDARY_SLOT_SPREAD_SEC))
+
+
+def plan_slot(index: int) -> tuple[str, float, str]:
+    """
+    План для отметки номер `index`: (action, delay, label).
     action: now | wait | skip
 
     Секунды считаются с долями. Старый код брал `datetime.now().second` и терял
     микросекунды, из-за чего запрос уходил в среднем на 500 мс позже слота.
     """
-    current = now_second()
-    first_at = float(check_at_second())
-
-    if slot == 0:
-        jitter = first_slot_jitter_sec()
-        delay = (first_at + jitter) - current
-        if delay < -SLOT_GRACE_SEC:
-            return "skip", 0.0, ""
-        if delay <= 0:
-            return "now", 0.0, f":{first_at:02.0f} сразу (опоздание {-delay * 1000:.0f} мс)"
-        label = f":{first_at:02.0f} + {jitter:.1f}с" if jitter else f":{first_at:02.0f}"
-        return "wait", delay, label
-
-    if current > SECOND_SLOT_SEC_MAX:
+    anchors = slot_seconds()
+    if index >= len(anchors):
         return "skip", 0.0, ""
 
-    target = float(second_check_second())
-    delay = target - current
+    anchor = float(anchors[index])
+    spread = 0 if index == 0 else SECONDARY_SLOT_SPREAD_SEC
+    current = now_second()
+
+    # Решаем по окну целиком, а не по случайно выбранной точке внутри него.
+    # Иначе на :31 бот с выпавшим сдвигом −2 счёл бы окно :28–:32 упущенным,
+    # хотя оно ещё открыто, и пропустил бы половину вторых заходов.
+    if current > anchor + spread + SLOT_GRACE_SEC:
+        return "skip", 0.0, ""
+
+    jitter = slot_jitter_sec(index)
+    delay = (anchor + jitter) - current
     if delay <= 0:
-        if current >= SECOND_SLOT_SEC_MIN:
-            return "now", 0.0, f"2-й сразу (:{current:05.2f})"
-        return "now", 0.0, "2-й сразу"
-    return "wait", delay, f":{target:02.0f} (2-й)"
+        return "now", 0.0, f":{anchor:02.0f} сразу (опоздание {-delay * 1000:.0f} мс)"
+
+    label = f":{anchor:02.0f}"
+    if jitter:
+        label += f" {jitter:+.1f}с"
+    return "wait", delay, label
 
 
-def plan_wait_next_minute_slot0() -> tuple[float, str]:
-    first_at = float(check_at_second())
+def plan_wait_next_slot0() -> tuple[float, str]:
+    """Сколько ждать до первой отметки следующего круга."""
+    period = check_period_sec()
+    first_at = float(slot_seconds()[0])
     jitter = first_slot_jitter_sec()
     delay = seconds_until_second(first_at, jitter=jitter)
     if delay < 1.0:
         # Только что стреляли в этот слот — ждём полный круг, а не 0.2с.
         delay += 60.0
-    label = f":{first_at:02.0f} след. мин"
+
+    # При периоде реже минуты нерабочие минуты пропускаем, иначе бот стрелял бы
+    # каждую минуту вместо каждой второй.
+    if slot_minute_stride(period) > 1:
+        now = dt.datetime.now()
+        while not is_slot_minute(period, now + dt.timedelta(seconds=delay)):
+            delay += 60.0
+
+    label = f":{first_at:02.0f} след. круг"
     if jitter:
         label += f" + {jitter:.1f}с"
     return delay, label
@@ -225,14 +271,14 @@ def run_planned_checks(
     state_key: str,
     guard: BookingGuard,
 ) -> int | None:
-    """Выполнить слоты текущей минуты (макс. 1× :00 и 1× :28–32), затем ждать след. мин."""
+    """Выполнить отметки текущего круга, затем ждать следующий."""
     for slot in slots:
         action, delay, label = plan_slot(slot)
         if action == "skip":
             continue
         wait_for_planned_slot(action, delay, label)
         started = time.strftime("%H:%M:%S")
-        slot_note = " 2" if slot == 1 else ""
+        slot_note = f" {slot + 1}" if slot else ""
         print(
             f"[check{slot_note}] {started} {route_line(date_label)}, "
             f"passenger: {format_passenger_names()}"
@@ -333,8 +379,8 @@ def run_planned_checks(
         }
         save_state(state)
 
-    delay, label = plan_wait_next_minute_slot0()
-    print(f"[slot] жду {label} (≈{delay:.1f}с до след. мин)…")
+    delay, label = plan_wait_next_slot0()
+    print(f"[slot] жду {label} (≈{delay:.1f}с)…")
     time.sleep(delay)
     return None
 
@@ -546,14 +592,14 @@ def run_check_once(*, verbose: bool = True) -> tuple[bool, list[str], dict[str, 
 
 def run_single_check(date_label: str) -> int:
     """Один цикл: дождаться ближайшего слота, проверить, напечатать результат."""
-    for slot in (0, 1):
+    for slot in range(len(slot_seconds())):
         action, delay, label = plan_slot(slot)
         if action == "skip":
             continue
         wait_for_planned_slot(action, delay, label)
         break
     else:
-        delay, label = plan_wait_next_minute_slot0()
+        delay, label = plan_wait_next_slot0()
         wait_for_planned_slot("wait", delay, label)
 
     print(
@@ -618,8 +664,6 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
     train_suffix = f"-{selector}" if selector else ""
     strict_suffix = "-strict" if railway_strict() else "-flex"
     state_key = f"{source}-{destination}-{date_label}{wagon_suffix}{train_suffix}{strict_suffix}"
-    at_sec = check_at_second()
-
     print("=== Railway watch ===")
     print(f"Маршрут: {route_line(date_label)}")
     if configured_wagons:
@@ -642,7 +686,9 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
     else:
         print(f"Рейс: все | {railway_strict_label()}")
     print(f"Пассажиры: {env('PASSENGER_IDS') or get_passenger_ids()[0]}")
-    print(f"Слот: 1-й в :{at_sec:02d} +0/0.1/0.2с, 2-й случайно :{SECOND_SLOT_SEC_MIN}–:{SECOND_SLOT_SEC_MAX}")
+    marks = ", ".join(f":{sec:02d}" for sec in slot_seconds())
+    spread = f", остальные ±{SECONDARY_SLOT_SPREAD_SEC}с" if len(slot_seconds()) > 1 else ""
+    print(f"Слот: каждые {check_period_sec()}с — {marks} (1-й +0/0.1/0.2с{spread})")
     if notifications_delegated():
         # Запуск из панели: она сама читает журнал броней и шлёт письмо и SMS.
         print("[notify] уведомления рассылает панель")
@@ -681,7 +727,7 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
     try:
         while True:
             result = run_planned_checks(
-                slots=(0, 1),
+                slots=tuple(range(len(slot_seconds()))),
                 date_label=date_label,
                 state=state,
                 state_key=state_key,

@@ -221,6 +221,7 @@ async def save_service(
         "extra_login": str(raw.get("extra_login", "")),
         "password_enc": str(raw.get("password", "")),
         "extra_password_enc": str(raw.get("extra_password", "")),
+        "check_period_sec": str(raw.get("check_period_sec", "30")),
         "check_at_second": str(raw.get("check_at_second", "0")),
         "max_searches_per_hour": str(raw.get("max_searches_per_hour", "0")),
         "repeated_error_pause_after": str(raw.get("repeated_error_pause_after", "3")),
@@ -228,18 +229,9 @@ async def save_service(
         "captcha_max_attempts": str(raw.get("captcha_max_attempts", "5")),
         # Флажки приходят в форме, только если отмечены.
         "is_enabled": "is_enabled" in raw,
-        "slot_00_enabled": "slot_00_enabled" in raw,
-        "slot_30_enabled": "slot_30_enabled" in raw,
         "captcha_manual": "captcha_manual" in raw,
         "auto_book": "auto_book" in raw,
     }
-
-    if not data["slot_00_enabled"] and not data["slot_30_enabled"]:
-        # Без единого окна бот не сделает ни одной проверки и будет просто спать.
-        return _page(
-            request, user, db, is_error=True,
-            message=f"{SERVICE_TITLES[service]}: нужно оставить хотя бы одно окно проверки",
-        )
 
     save_service_config(db, service, data)
     return _page(request, user, db, message=f"{SERVICE_TITLES[service]}: настройки сохранены")

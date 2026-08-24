@@ -31,6 +31,7 @@ bootstrap(__file__)
 
 import argparse
 import base64
+import datetime as dt
 import json
 import os
 import random
@@ -40,7 +41,15 @@ from typing import Any
 
 from core.open_file import open_in_viewer
 from core.term import cyan, green, purple, red
-from core.slots import now_second, precise_sleep
+from core.slots import (
+    CHECK_PERIODS_SEC,
+    is_slot_minute,
+    normalize_check_period,
+    now_second,
+    precise_sleep,
+    slot_anchors,
+    slot_minute_stride,
+)
 from core.booking_guard import BookingGuard
 from core.state import load_json, save_json
 from api_client import ResultUnknown, api_request, warmup_connection
@@ -176,23 +185,59 @@ def env_on(name: str, default: str = "1") -> bool:
     return (env(name, default) or default).strip().lower() not in ("0", "false", "no", "")
 
 
+def first_slot_second() -> int:
+    """Секунда первого окна: API_CHECK_AT_SEC, 0–59."""
+    try:
+        return max(0, min(59, int(env("API_CHECK_AT_SEC", "0") or "0")))
+    except ValueError:
+        return 0
+
+
+def check_period_sec() -> int:
+    """
+    Как часто проверять: 10 / 30 / 60 / 120 секунд (API_CHECK_PERIOD_SEC).
+
+    Если период не задан, читаем старые флаги API_CHECK_EVERY_00/30 — они
+    лежат в готовых .env.local и означают ровно «дважды в минуту» либо
+    «раз в минуту». Ломать чужие файлы ради нового имени незачем.
+    """
+    raw = env("API_CHECK_PERIOD_SEC")
+    if raw:
+        return normalize_check_period(raw)
+
+    first = env_on("API_CHECK_EVERY_00", "1")
+    second = env_on("API_CHECK_EVERY_30", "1")
+    if first and second:
+        return 30
+    if first or second:
+        return 60
+    raise SystemExit(
+        "Нет слотов: задай API_CHECK_PERIOD_SEC "
+        f"({'/'.join(str(p) for p in CHECK_PERIODS_SEC)}) в .env.local"
+    )
+
+
 def check_at_second_ranges() -> list[tuple[int, int]]:
-    """Окна :00.0–:01.0 и :30.0–:31.0, флаги API_CHECK_EVERY_00 / API_CHECK_EVERY_30."""
-    ranges: list[tuple[int, int]] = []
-    if env_on("API_CHECK_EVERY_00", "1"):
-        ranges.append((0, 1))
-    if env_on("API_CHECK_EVERY_30", "1"):
-        ranges.append((30, 31))
-    return ranges
+    """
+    Окна проверки: по секунде на каждую отметку периода.
+
+    Раньше окна были зашиты (:00 и :30) и включались двумя флагами. Теперь
+    отметки считает `slot_anchors`, поэтому появились 10 и 120 секунд,
+    а первое окно можно сдвинуть с нуля.
+
+    Окно шириной в секунду оставлено как было: внутри него бот стреляет
+    в случайную десятую долю, чтобы запросы не ложились в одну и ту же долю.
+    """
+    period = check_period_sec()
+    # Второй флаг раньше выключал именно окно :30. Если период взят из старых
+    # флагов и включено только одно окно — уважаем, какое именно.
+    if not env("API_CHECK_PERIOD_SEC") and period == 60 and not env_on("API_CHECK_EVERY_00", "1"):
+        return [(30, 31)]
+    return [(anchor, anchor + 1) for anchor in slot_anchors(period, first_slot_second())]
 
 
 def check_at_second_range() -> tuple[int, int]:
-    ranges = check_at_second_ranges()
-    if not ranges:
-        raise SystemExit(
-            "Нет слотов: поставь API_CHECK_EVERY_00=1 и/или API_CHECK_EVERY_30=1 в .env.local"
-        )
-    return ranges[0]
+    return check_at_second_ranges()[0]
 
 
 def format_slot_ranges() -> str:
@@ -223,14 +268,24 @@ def next_check_slot() -> tuple[float, tuple[int, int], float]:
     Секунда берётся с долями (`now_second`), а не через `datetime.now().second`.
     Старый расчёт выбрасывал микросекунды, поэтому запрос стабильно уходил
     в среднем на полсекунды позже намеченной отметки — в гонке это проигрыш.
+
+    Перебор идёт на `stride` минут вперёд. Для периодов до минуты stride=1
+    и поведение прежнее — эта минута и следующая. Для 120 секунд нерабочие
+    минуты пропускаются, иначе бот стрелял бы каждую минуту вместо каждой второй.
     """
-    current = now_second()
+    now = dt.datetime.now()
+    current = now_second(now)
+    period = check_period_sec()
+    stride = slot_minute_stride(period)
+    windows = check_at_second_ranges()
     best: tuple[float, float, tuple[int, int]] | None = None  # (delay, offset, окно)
 
-    for lo, hi in check_at_second_ranges():
-        # Сначала пробуем эту минуту, затем следующую (+60 с).
-        for minute_shift in (0.0, 60.0):
-            ticks = [t + minute_shift for t in _window_ticks(lo, hi) if t + minute_shift > current]
+    for minutes_ahead in range(stride + 1):
+        if not is_slot_minute(period, now + dt.timedelta(minutes=minutes_ahead)):
+            continue
+        base = minutes_ahead * 60.0
+        for lo, hi in windows:
+            ticks = [t + base for t in _window_ticks(lo, hi) if t + base > current]
             if not ticks:
                 continue
             # Сравниваем окна по ближайшей доступной отметке, а стреляем
@@ -239,10 +294,10 @@ def next_check_slot() -> tuple[float, tuple[int, int], float]:
             chosen = random.choice(ticks)
             if best is None or earliest < best[0]:
                 best = (earliest, chosen, (lo, hi))
-            break
 
     if best is None:
-        # Все окна на ближайшие две минуты выбраны — ждём начало следующей минуты.
+        # Сюда попасть нельзя: перебрано stride+1 минут, а рабочая среди них есть
+        # всегда. Оставлено, чтобы опечатка в расписании не роняла монитор.
         return 0.0, check_at_second_range(), max(0.0, 60.0 - current)
 
     _earliest, offset, window = best
@@ -1254,24 +1309,20 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
     date_label = env("DATE")
     state_key = f"{env('DEPART_PORT_CODE')}-{env('ARRIVAL_PORT_CODE')}-{date_label}"
 
-    slot_ranges = check_at_second_ranges()
-    if not slot_ranges:
-        raise SystemExit(
-            "Нет слотов: API_CHECK_EVERY_00=1 и/или API_CHECK_EVERY_30=1 в airlines_api/.env.local"
-        )
+    period = check_period_sec()
     slot_label = format_slot_ranges()
-    n_slots = len(slot_ranges)
+    n_slots = len(check_at_second_ranges())
     print("=== T5 API watch ===")
     print(f"Маршрут: {route_line(date_label)}")
     print(f"Рейс: {flight_selection_label()}")
     print(f"Пассажиры: {env('PASSENGER_IDS') or '1'}")
     req_per_cycle = (2 if skip_availability_probe() else 3) + 1
+    rate = (
+        f"{n_slots}/мин" if period <= 60 else f"раз в {period // 60} мин"
+    )
     print(
         f"Слот: {slot_label} шаг 0.1с "
-        f"({n_slots} проверк{'и' if n_slots == 2 else 'а'}/мин, "
-        f"00={int(env_on('API_CHECK_EVERY_00', '1'))} "
-        f"30={int(env_on('API_CHECK_EVERY_30', '1'))}, "
-        f"{req_per_cycle} HTTP за цикл)"
+        f"(каждые {period}с — {rate}, {req_per_cycle} HTTP за цикл)"
     )
     ua = current_ios_user_agent()
     print(f"[ua] {ua}  (смена через {ios_user_agent_rotate_in_min():.0f} мин)")

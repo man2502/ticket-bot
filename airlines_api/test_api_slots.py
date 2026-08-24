@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -85,7 +86,7 @@ def test_ticks_cover_whole_window() -> None:
 
 def test_next_slot_is_in_the_future(monkeypatch: pytest.MonkeyPatch) -> None:
     """В середине окна :30 стреляем в оставшийся тик этой же минуты, не ждём минуту."""
-    monkeypatch.setattr(api_check, "now_second", lambda: 30.45)
+    monkeypatch.setattr(api_check, "now_second", lambda _now=None: 30.45)
     offset, window, until = api_check.next_check_slot()
     assert window == (30, 31)
     assert 0 < until <= 0.6
@@ -93,7 +94,7 @@ def test_next_slot_is_in_the_future(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_passed_window_rolls_to_next_minute(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(api_check, "now_second", lambda: 45.0)
+    monkeypatch.setattr(api_check, "now_second", lambda _now=None: 45.0)
     _offset, window, until = api_check.next_check_slot()
     assert window == (0, 1)
     assert 15.0 <= until <= 16.0
@@ -101,7 +102,7 @@ def test_passed_window_rolls_to_next_minute(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_nearest_window_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     """В :05 ближе окно :30, а не :00 следующей минуты."""
-    monkeypatch.setattr(api_check, "now_second", lambda: 5.0)
+    monkeypatch.setattr(api_check, "now_second", lambda _now=None: 5.0)
     _offset, window, until = api_check.next_check_slot()
     assert window == (30, 31)
     assert 25.0 <= until <= 26.0
@@ -342,3 +343,92 @@ def test_other_statuses_keep_raw_answer() -> None:
     from api_auth import _login_error
 
     assert "oops" in _login_error(500, {"message": "oops"}, "ios", "x")
+
+
+# --------------------------------------------------------------------------
+# Период проверки: 10 / 30 / 60 / 120 секунд
+# --------------------------------------------------------------------------
+
+
+def _freeze_clock(monkeypatch: pytest.MonkeyPatch, moment: dt.datetime) -> None:
+    """
+    Заморозить `datetime.now()` внутри api_check, не трогая арифметику дат.
+
+    Подменять весь класс datetime нельзя: расписание складывает момент
+    с timedelta, и подделка должна остаться настоящей датой.
+    """
+    fake = types.SimpleNamespace(
+        datetime=types.SimpleNamespace(now=lambda: moment),
+        timedelta=dt.timedelta,
+    )
+    monkeypatch.setattr(api_check, "dt", fake)
+    monkeypatch.setattr(
+        api_check, "now_second", lambda _now=None: moment.second + moment.microsecond / 1e6
+    )
+
+
+def test_old_flags_still_mean_thirty_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    В готовых .env.local лежат API_CHECK_EVERY_00/30, а не период. Ломать их
+    ради нового имени незачем: обе галочки — это ровно 30 секунд.
+    """
+    monkeypatch.delenv("API_CHECK_PERIOD_SEC", raising=False)
+    monkeypatch.setenv("API_CHECK_EVERY_00", "1")
+    monkeypatch.setenv("API_CHECK_EVERY_30", "1")
+    assert api_check.check_period_sec() == 30
+    assert api_check.check_at_second_ranges() == [(0, 1), (30, 31)]
+
+
+def test_only_second_old_flag_keeps_its_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Выключено окно :00 — стреляем в :30, а не в :00 раз в минуту."""
+    monkeypatch.delenv("API_CHECK_PERIOD_SEC", raising=False)
+    monkeypatch.setenv("API_CHECK_EVERY_00", "0")
+    monkeypatch.setenv("API_CHECK_EVERY_30", "1")
+    assert api_check.check_period_sec() == 60
+    assert api_check.check_at_second_ranges() == [(30, 31)]
+
+
+def test_period_overrides_old_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_CHECK_PERIOD_SEC", "10")
+    monkeypatch.setenv("API_CHECK_EVERY_00", "0")
+    monkeypatch.setenv("API_CHECK_EVERY_30", "0")
+    monkeypatch.delenv("API_CHECK_AT_SEC", raising=False)
+    windows = api_check.check_at_second_ranges()
+    assert [lo for lo, _hi in windows] == [0, 10, 20, 30, 40, 50]
+
+
+def test_period_window_is_shifted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_CHECK_PERIOD_SEC", "30")
+    monkeypatch.setenv("API_CHECK_AT_SEC", "7")
+    assert api_check.check_at_second_ranges() == [(7, 8), (37, 38)]
+
+
+def test_ten_second_period_picks_the_next_mark(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_CHECK_PERIOD_SEC", "10")
+    monkeypatch.delenv("API_CHECK_AT_SEC", raising=False)
+    _freeze_clock(monkeypatch, dt.datetime(2026, 8, 20, 12, 0, 22))
+    _offset, window, until = api_check.next_check_slot()
+    assert window == (30, 31)
+    assert 8.0 <= until <= 9.0
+
+
+def test_two_minute_period_waits_out_the_idle_minute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Самая вероятная ошибка нового расписания — стрелять каждую минуту вместо
+    каждой второй. В нерабочую минуту ждать надо дольше минуты.
+    """
+    monkeypatch.setenv("API_CHECK_PERIOD_SEC", "120")
+    monkeypatch.delenv("API_CHECK_AT_SEC", raising=False)
+
+    waits = []
+    for minute in range(4):
+        _freeze_clock(monkeypatch, dt.datetime(2026, 8, 20, 12, minute, 30))
+        _offset, _window, until = api_check.next_check_slot()
+        waits.append(until)
+
+    # Окно шириной в секунду, отметка внутри случайная — отсюда вилка.
+    # Из рабочей минуты до следующей отметки ~90 с, из нерабочей ~30 с.
+    assert all(90.0 <= w <= 91.0 for w in waits[0::2]), waits
+    assert all(30.0 <= w <= 31.0 for w in waits[1::2]), waits

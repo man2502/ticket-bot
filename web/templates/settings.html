@@ -23,6 +23,18 @@
   </label>
 {% endmacro %}
 
+{% macro select_field(name, label, value, options, hint='') %}
+  <label>
+    {{ label }}
+    <select name="{{ name }}">
+      {% for opt_value, opt_label in options %}
+      <option value="{{ opt_value }}" {% if opt_value == value %}selected{% endif %}>{{ opt_label }}</option>
+      {% endfor %}
+    </select>
+    {% if hint %}<span class="field-hint">{{ hint }}</span>{% endif %}
+  </label>
+{% endmacro %}
+
 {% block content %}
 <h1>Настройки</h1>
 
@@ -189,21 +201,17 @@
 
     <h3>Когда проверять</h3>
     <p class="muted small">
-      Свободного интервала здесь нет намеренно: боты стреляют в фиксированные
-      секунды минуты с небольшим разбросом. Произвольный интервал — прямой путь
-      к бану вместо билета.
+      Список закрытый намеренно: боты стреляют в фиксированные секунды минуты
+      с небольшим разбросом. Произвольный интервал вроде 45 секунд — ровная
+      сетка, которой у живого человека не бывает, и прямой путь к бану.
     </p>
     <div class="field-grid">
-      <label class="checkbox">
-        <input type="checkbox" name="slot_00_enabled" {% if svc.slot_00_enabled %}checked{% endif %}>
-        Окно на :00
-      </label>
-      <label class="checkbox">
-        <input type="checkbox" name="slot_30_enabled" {% if svc.slot_30_enabled %}checked{% endif %}>
-        Окно на :30
-      </label>
-      {{ text_field('check_at_second', 'Секунда первого окна', svc.check_at_second, '0–59') }}
+      {{ select_field('check_period_sec', 'Период проверки', svc.check_period_sec,
+                      svc.period_options,
+                      'Каждые 10 секунд — режим «очень надо»: шесть заходов в минуту заметно повышают риск 429') }}
+      {{ text_field('check_at_second', 'Секунда первой отметки', svc.check_at_second, '0–59') }}
     </div>
+    <p class="muted small">Отметки: {{ svc.slot_marks }}</p>
 
     <h3>Ограничители</h3>
     <div class="field-grid">

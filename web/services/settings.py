@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.slots import CHECK_PERIODS_SEC, normalize_check_period, slot_anchors
 from web.crypto import SecretUnreadable, decrypt, encrypt
 from web.models import Service, ServiceConfig, Setting
 
@@ -168,13 +169,18 @@ def save_service_config(db, service: str, data: dict[str, Any]) -> ServiceConfig
 
     for field in (
         "is_enabled",
-        "slot_00_enabled",
-        "slot_30_enabled",
         "captcha_manual",
         "auto_book",
     ):
         if field in data:
             setattr(config, field, bool(data[field]))
+
+    if "check_period_sec" in data:
+        # Не clamp, а выбор из списка: 45 секунд — ровная сетка, которой у
+        # живого человека не бывает, и она видна на стороне сайта.
+        config.check_period_sec = normalize_check_period(
+            data["check_period_sec"], config.check_period_sec
+        )
 
     limits = {
         # поле: (минимум, максимум)
@@ -195,6 +201,28 @@ def save_service_config(db, service: str, data: dict[str, Any]) -> ServiceConfig
     return config
 
 
+# Подписи периодов. Отдельно от core.slots: там расписание, здесь текст формы.
+_PERIOD_LABELS = {
+    10: "каждые 10 секунд — 6 раз в минуту",
+    30: "каждые 30 секунд — 2 раза в минуту",
+    60: "раз в минуту",
+    120: "раз в 2 минуты",
+}
+
+
+def check_period_options() -> list[tuple[int, str]]:
+    """Варианты для выпадающего списка в форме сервиса."""
+    return [(period, _PERIOD_LABELS.get(period, f"каждые {period} с")) for period in CHECK_PERIODS_SEC]
+
+
+def format_slot_marks(period_sec: int, at_second: int) -> str:
+    """Отметки словами: «:00, :30» или «:07 раз в 2 минуты»."""
+    marks = ", ".join(f":{sec:02d}" for sec in slot_anchors(period_sec, at_second))
+    if normalize_check_period(period_sec) > 60:
+        return f"{marks} раз в {normalize_check_period(period_sec) // 60} мин"
+    return marks
+
+
 def _to_int(raw: Any, fallback: int) -> int:
     try:
         return int(str(raw).strip())
@@ -212,9 +240,12 @@ def service_config_view(db, service: str) -> dict[str, Any]:
         "extra_login": config.extra_login,
         "password_set": bool(config.password_enc),
         "extra_password_set": bool(config.extra_password_enc),
+        "check_period_sec": config.check_period_sec,
+        "period_options": check_period_options(),
+        # Готовая подсказка «во сколько именно стреляем»: пересчитывать период
+        # в секунды минуты в голове человек не должен.
+        "slot_marks": format_slot_marks(config.check_period_sec, config.check_at_second),
         "check_at_second": config.check_at_second,
-        "slot_00_enabled": config.slot_00_enabled,
-        "slot_30_enabled": config.slot_30_enabled,
         "max_searches_per_hour": config.max_searches_per_hour,
         "repeated_error_pause_after": config.repeated_error_pause_after,
         "rate_limit_pause_sec": config.rate_limit_pause_sec,

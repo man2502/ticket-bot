@@ -35,7 +35,7 @@ def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
         railway_check, "plan_slot", lambda slot: ("now", 0.0, "") if slot == 0 else ("skip", 0.0, "")
     )
     monkeypatch.setattr(railway_check, "wait_for_planned_slot", lambda *a, **k: None)
-    monkeypatch.setattr(railway_check, "plan_wait_next_minute_slot0", lambda: (0.0, ""))
+    monkeypatch.setattr(railway_check, "plan_wait_next_slot0", lambda: (0.0, ""))
     monkeypatch.setattr(railway_check, "precise_sleep", lambda _d: None)
     monkeypatch.setattr(railway_check, "route_line", lambda *_a: "ASB → CRZ")
     monkeypatch.setattr(railway_check, "format_passenger_names", lambda: "Anvar")

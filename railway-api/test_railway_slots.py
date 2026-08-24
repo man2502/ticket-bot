@@ -102,3 +102,103 @@ def test_overwrite_keeps_previous_on_failure(tmp_path: Path) -> None:
     with pytest.raises(TypeError):
         save_json(target, {"v": object()})
     assert json.loads(target.read_text(encoding="utf-8")) == {"v": 1}
+
+
+# --------------------------------------------------------------------------- #
+# Расписание проверок
+# --------------------------------------------------------------------------- #
+
+
+def _railway(monkeypatch: pytest.MonkeyPatch, period: str = "", at_sec: str = ""):
+    """Модуль бота с заданным расписанием в окружении."""
+    for _path in (str(REPO_ROOT), str(REPO_ROOT / "railway-api")):
+        if _path not in sys.path:
+            sys.path.insert(0, _path)
+    import railway_check
+
+    if period:
+        monkeypatch.setenv("RAILWAY_CHECK_PERIOD_SEC", period)
+    else:
+        monkeypatch.delenv("RAILWAY_CHECK_PERIOD_SEC", raising=False)
+    if at_sec:
+        monkeypatch.setenv("RAILWAY_CHECK_AT_SEC", at_sec)
+    else:
+        monkeypatch.delenv("RAILWAY_CHECK_AT_SEC", raising=False)
+    return railway_check
+
+
+def test_default_schedule_matches_old_behaviour(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Раньше расписание было зашито: :00 и случайная секунда :28–:32. Панель на
+    него не влияла, хотя галочки в форме показывала. Без переменной окружения
+    поведение обязано остаться прежним.
+    """
+    railway_check = _railway(monkeypatch)
+    assert railway_check.check_period_sec() == 30
+    assert railway_check.slot_seconds() == [0, 30]
+
+
+def test_period_changes_the_number_of_marks(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _railway(monkeypatch, "10").slot_seconds() == [0, 10, 20, 30, 40, 50]
+    assert _railway(monkeypatch, "60").slot_seconds() == [0]
+    assert _railway(monkeypatch, "120").slot_seconds() == [0]
+
+
+def test_marks_follow_the_anchor(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _railway(monkeypatch, "30", "7").slot_seconds() == [7, 37]
+
+
+def test_second_mark_keeps_the_old_spread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Второй запрос минуты и раньше гулял в :28–:32 — ровная сетка приметна.
+    Разброс должен пережить переход на периоды.
+    """
+    railway_check = _railway(monkeypatch, "30")
+    monkeypatch.setattr(railway_check, "now_second", lambda: 0.0)
+
+    seen = set()
+    for _ in range(200):
+        action, delay, _label = railway_check.plan_slot(1)
+        assert action == "wait"
+        seen.add(round(delay))
+    assert seen == {28, 29, 30, 31, 32}
+
+
+def test_first_mark_is_never_early(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Первая отметка гонится за моментом открытия продаж: сдвиг только вперёд
+    и на доли секунды. Уйти раньше времени значит спросить о местах до того,
+    как они появились.
+    """
+    railway_check = _railway(monkeypatch, "30")
+    assert all(railway_check.slot_jitter_sec(0) >= 0 for _ in range(50))
+
+
+def test_late_arrival_into_a_spread_mark_still_fires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    На :31 окно :28–:32 ещё открыто. Прощать опоздание только на полсекунды,
+    как первой отметке, здесь нельзя — половина заходов уходила бы в skip.
+    """
+    railway_check = _railway(monkeypatch, "30")
+    monkeypatch.setattr(railway_check, "now_second", lambda: 31.0)
+    monkeypatch.setattr(railway_check, "slot_jitter_sec", lambda _index: -2.0)
+
+    action, _delay, _label = railway_check.plan_slot(1)
+    assert action == "now"
+
+
+def test_missed_mark_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    railway_check = _railway(monkeypatch, "30")
+    monkeypatch.setattr(railway_check, "now_second", lambda: 45.0)
+    monkeypatch.setattr(railway_check, "slot_jitter_sec", lambda _index: 0.0)
+
+    assert railway_check.plan_slot(0)[0] == "skip"
+    assert railway_check.plan_slot(1)[0] == "skip"
+
+
+def test_index_beyond_schedule_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Период сменили на 60 с прямо во время работы — лишняя отметка не должна стрелять."""
+    railway_check = _railway(monkeypatch, "60")
+    assert railway_check.plan_slot(1)[0] == "skip"

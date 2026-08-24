@@ -120,6 +120,7 @@ def _railway_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> dic
         "DATE": job.depart_date,
         "PASSENGERS_FILE": passengers_file,
         "PASSENGER_IDS": passenger_ids,
+        "RAILWAY_CHECK_PERIOD_SEC": config.check_period_sec,
         "RAILWAY_CHECK_AT_SEC": config.check_at_second,
         "RAILWAY_AUTO_BOOK": "1" if config.auto_book else "0",
         "RAILWAY_MULTIMEDIA": "1" if params.get("multimedia") else "0",
@@ -160,8 +161,8 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
         # Токены в .env.local не пишем: панель запускает бота из своего каталога
         # и не должна править файлы модуля.
         "API_SAVE_TOKENS": "0",
-        "API_CHECK_EVERY_00": "1" if config.slot_00_enabled else "0",
-        "API_CHECK_EVERY_30": "1" if config.slot_30_enabled else "0",
+        "API_CHECK_PERIOD_SEC": config.check_period_sec,
+        "API_CHECK_AT_SEC": config.check_at_second,
         "API_AUTO_BOOK": "1" if config.auto_book else "0",
         "API_RATE_LIMIT_PAUSE_SEC": config.rate_limit_pause_sec,
         "API_REPEATED_ERROR_PAUSE_AFTER": config.repeated_error_pause_after,

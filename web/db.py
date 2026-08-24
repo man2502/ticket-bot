@@ -84,7 +84,67 @@ def init_db() -> None:
     """Создать таблицы и значения по умолчанию. Идемпотентно."""
     ensure_dirs()
     Base.metadata.create_all(get_engine())
+    _migrate()
     _seed_defaults()
+
+
+def _migrate() -> None:
+    """
+    Догнать схему уже существующей базы до моделей.
+
+    Alembic не заводим: правок за всё время единицы, а лишняя зависимость и
+    каталог версий стоят дороже, чем несколько идемпотентных шагов здесь.
+    `create_all` умеет создавать таблицы, но не менять их, поэтому у людей
+    со старой базой новая колонка не появилась бы вовсе.
+    """
+    from sqlalchemy import text
+
+    with get_engine().begin() as conn:
+        columns = {
+            row[1] for row in conn.execute(text("PRAGMA table_info(service_configs)"))
+        }
+        if not columns:
+            return
+
+        # Период проверки вместо пары галочек «:00» и «:30».
+        if "check_period_sec" not in columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE service_configs "
+                    "ADD COLUMN check_period_sec INTEGER NOT NULL DEFAULT 30"
+                )
+            )
+            if {"slot_00_enabled", "slot_30_enabled"} <= columns:
+                # Обе галочки = дважды в минуту, одна = раз в минуту. Если
+                # оставалось только окно :30 — переносим и сдвиг, иначе бот
+                # начал бы стрелять в :00, куда его никто не просил.
+                conn.execute(
+                    text(
+                        "UPDATE service_configs SET "
+                        "check_period_sec = CASE "
+                        "  WHEN slot_00_enabled AND slot_30_enabled THEN 30 ELSE 60 END, "
+                        "check_at_second = CASE "
+                        "  WHEN slot_30_enabled AND NOT slot_00_enabled THEN 30 "
+                        "  ELSE check_at_second END "
+                        "WHERE service <> 'railway'"
+                    )
+                )
+                # У railway эти галочки не доезжали до бота вовсе: он всегда
+                # делал два запроса в минуту (:00 и :28–32). Любое их состояние
+                # означало 30 секунд, и менять фактический темп при обновлении
+                # панели было бы неожиданностью.
+                conn.execute(
+                    text(
+                        "UPDATE service_configs SET check_period_sec = 30 "
+                        "WHERE service = 'railway'"
+                    )
+                )
+
+        # Старые колонки NOT NULL без значения по умолчанию: пока они есть,
+        # вставка новой строки конфигурации падала бы на них.
+        for dead in ("slot_00_enabled", "slot_30_enabled"):
+            if dead in columns:
+                conn.execute(text(f"ALTER TABLE service_configs DROP COLUMN {dead}"))
 
 
 def _seed_defaults() -> None:
@@ -130,9 +190,8 @@ def _default_service_config(service):
     if service == Service.AIRLINES:
         return ServiceConfig(
             service=service.value,
-            # Самолёт проверяем дважды в минуту: окна :00 и :30.
-            slot_00_enabled=True,
-            slot_30_enabled=True,
+            # Самолёт проверяем дважды в минуту: отметки :00 и :30.
+            check_period_sec=30,
             check_at_second=0,
             captcha_manual=False,
             captcha_max_attempts=5,
@@ -140,10 +199,9 @@ def _default_service_config(service):
         )
     return ServiceConfig(
         service=service.value,
-        # У поезда капчи нет; второй запрос делается между :28 и :32
-        # самим ботом, отдельного переключателя для него не требуется.
-        slot_00_enabled=True,
-        slot_30_enabled=False,
+        # У поезда капчи нет и запрос дешевле, но чаще 30 с смысла мало:
+        # места в кассе появляются пачками, а не по одному в секунду.
+        check_period_sec=30,
         check_at_second=0,
         captcha_manual=False,
         rate_limit_pause_sec=60,

@@ -197,12 +197,12 @@ def test_slots_follow_service_config(db) -> None:
     from web.services.bot_env import prepare_launch
     from web.services.settings import save_service_config
 
-    save_service_config(db, "airlines", {"slot_00_enabled": True, "slot_30_enabled": False})
+    save_service_config(db, "airlines", {"check_period_sec": "120", "check_at_second": "7"})
     job = _make_job(db, "airlines")
     values = _env_values(prepare_launch(db, job).env_file)
 
-    assert values["API_CHECK_EVERY_00"] == "1"
-    assert values["API_CHECK_EVERY_30"] == "0"
+    assert values["API_CHECK_PERIOD_SEC"] == "120"
+    assert values["API_CHECK_AT_SEC"] == "7"
 
 
 def test_flight_time_replaces_index(db) -> None:

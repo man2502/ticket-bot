@@ -256,11 +256,11 @@ class ServiceConfig(Base):
     extra_login: Mapped[str] = mapped_column(String(64), default="")
     extra_password_enc: Mapped[str] = mapped_column(Text, default="")
 
-    # Слоты проверки: airlines умеет два окна в минуту (:00 и :30),
-    # railway — одно окно плюс второй запрос между :28 и :32.
+    # Расписание проверок: период (10/30/60/120 с) и секунда первой отметки.
+    # Раньше здесь были две галочки «окно :00» и «окно :30» — они умели выразить
+    # только 30 и 60 секунд, а до railway вообще не доезжали.
+    check_period_sec: Mapped[int] = mapped_column(Integer, default=30)
     check_at_second: Mapped[int] = mapped_column(Integer, default=0)
-    slot_00_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    slot_30_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Ограничители, чтобы не словить бан.
     max_searches_per_hour: Mapped[int] = mapped_column(Integer, default=0)  # 0 = без лимита

@@ -18,7 +18,27 @@ from __future__ import annotations
 import datetime as dt
 import time
 
-__all__ = ["now_second", "seconds_until_second", "precise_sleep", "sleep_until_second"]
+__all__ = [
+    "now_second",
+    "seconds_until_second",
+    "precise_sleep",
+    "sleep_until_second",
+    "CHECK_PERIODS_SEC",
+    "DEFAULT_CHECK_PERIOD_SEC",
+    "normalize_check_period",
+    "slot_anchors",
+    "slot_minute_stride",
+    "is_slot_minute",
+]
+
+# Как часто разрешено проверять. Список закрытый намеренно: произвольное число
+# вроде 47 секунд — это ровная сетка, которой у живого человека не бывает,
+# и она читается на стороне сайта быстрее всего.
+#
+# 10 секунд — режим «очень надо». Шесть заходов в минуту заметно повышают шанс
+# словить 429 и бан; держать его сутками не стоит.
+CHECK_PERIODS_SEC = (10, 30, 60, 120)
+DEFAULT_CHECK_PERIOD_SEC = 30
 
 _SPIN_WINDOW_SEC = 0.02
 
@@ -99,3 +119,58 @@ def sleep_until_second(
     )
     precise_sleep(delay)
     return delay
+
+
+def normalize_check_period(value: object, default: int = DEFAULT_CHECK_PERIOD_SEC) -> int:
+    """
+    Привести период к одному из разрешённых. Мусор и пустое — это default.
+
+    Ближайший подходящий не подбираем: тихо превратить 45 в 30 хуже, чем
+    вернуться к значению по умолчанию, — человек хотя бы заметит несовпадение.
+    """
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return number if number in CHECK_PERIODS_SEC else default
+
+
+def slot_minute_stride(period_sec: int) -> int:
+    """
+    Через сколько минут повторяется расписание.
+
+    Для 10/30/60 — каждую минуту, для 120 — через одну.
+    """
+    return max(1, normalize_check_period(period_sec) // 60)
+
+
+def slot_anchors(period_sec: int, at_second: int = 0) -> list[int]:
+    """
+    Секунды минуты, в которые открывается окно проверки.
+
+    Отсчёт идёт от `at_second`, а не от нуля: две копии панели, настроенные
+    на :00, ходили бы в сайт синхронно, и это видно в его логах. Сдвиг решает.
+
+        (30, 0)  → [0, 30]
+        (10, 7)  → [7, 17, 27, 37, 47, 57]
+        (120, 5) → [5]           # плюс пропуск каждой второй минуты
+    """
+    period = normalize_check_period(period_sec)
+    start = max(0, min(59, int(at_second)))
+    if period > 60:
+        return [start]
+    return [(start + offset) % 60 for offset in range(0, 60, period)]
+
+
+def is_slot_minute(period_sec: int, now: dt.datetime | None = None) -> bool:
+    """
+    Рабочая ли это минута для периода реже раза в минуту (120 с).
+
+    Считаем по минутам эпохи, а не по `now.minute`: так шаг не сбивается
+    на границе часа и одинаков в любом часовом поясе.
+    """
+    stride = slot_minute_stride(period_sec)
+    if stride <= 1:
+        return True
+    moment = now or dt.datetime.now()
+    return int(moment.timestamp()) // 60 % stride == 0
