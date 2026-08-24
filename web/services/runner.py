@@ -38,11 +38,12 @@ import threading
 from web.config import REPO_ROOT
 from web.db import session_scope
 from web.models import Job, JobLog, JobStatus, LogLevel
-from web.services.bot_env import local_env_warning, prepare_launch
+from web.services.bot_env import cleanup_run_dir, local_env_warning, prepare_launch
 
 __all__ = [
     "start_job",
     "stop_job",
+    "delete_job",
     "is_running",
     "active_job_id",
     "recover_orphans",
@@ -425,6 +426,52 @@ def _collect_bookings(db, job: Job) -> None:
                 )
             )
         db.commit()
+
+
+# --------------------------------------------------------------------------- #
+# Удаление
+# --------------------------------------------------------------------------- #
+
+
+def delete_job(db, job: Job) -> None:
+    """
+    Удалить процесс вместе с логами, пассажирами и бронями.
+
+    Перед удалением развязываем ссылки, у которых нет каскада:
+
+    * `notification_logs.booking_id` — история отправок переживает процесс
+      намеренно. Запись «ссылка на оплату ушла на такой-то адрес» ценна сама
+      по себе, особенно если бронь была настоящей и оплаченной.
+    * `captcha_samples.job_id` — размеченная капча остаётся в датасете
+      независимо от того, жив ли процесс, при котором она появилась.
+
+    В новых базах это делает `ondelete="SET NULL"`, но существующие им не
+    исправить: SQLite не умеет менять внешние ключи через ALTER TABLE.
+    Поэтому развязываем явно — работает на любой базе.
+    """
+    from web.models import Booking, CaptchaSample, NotificationLog
+
+    booking_ids = [
+        row.id for row in db.query(Booking).filter(Booking.job_id == job.id).all()
+    ]
+    if booking_ids:
+        (
+            db.query(NotificationLog)
+            .filter(NotificationLog.booking_id.in_(booking_ids))
+            .update({NotificationLog.booking_id: None}, synchronize_session=False)
+        )
+
+    (
+        db.query(CaptchaSample)
+        .filter(CaptchaSample.job_id == job.id)
+        .update({CaptchaSample.job_id: None}, synchronize_session=False)
+    )
+
+    # В каталоге запуска лежит check.env с паролями — убираем вместе с процессом.
+    cleanup_run_dir(job)
+
+    db.delete(job)
+    db.commit()
 
 
 # --------------------------------------------------------------------------- #

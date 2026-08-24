@@ -554,3 +554,107 @@ def test_long_sleep_is_split_into_chunks() -> None:
         slots.time.sleep = real_sleep
 
     assert max(calls) <= slots._MAX_SLEEP_CHUNK_SEC + 1e-9
+
+
+# --------------------------------------------------------------------------
+# Удаление процесса
+# --------------------------------------------------------------------------
+
+
+def _booking_with_notifications(db, job):
+    """Процесс с бронью и отправленными уведомлениями — как после удачного поиска."""
+    from web.models import Booking, NotificationLog
+
+    booking = Booking(
+        job_id=job.id, service=job.service, status="done",
+        guard_key="k1", booking_number="RW-77", payment_url="https://bank.tm/1",
+    )
+    db.add(booking)
+    db.flush()
+
+    db.add(NotificationLog(booking_id=booking.id, channel="email",
+                           recipient="boss@example.tm", is_sent=True))
+    db.add(NotificationLog(booking_id=booking.id, channel="sms",
+                           recipient="+99361234567", is_sent=False, error="шлюз молчит"))
+    db.commit()
+    return booking
+
+
+def test_job_with_booking_can_be_deleted(db) -> None:
+    """
+    Удаление процесса не должно упираться во внешние ключи.
+
+    notification_logs ссылается на bookings, и без развязывания SQLite
+    отвечает «FOREIGN KEY constraint failed» — кнопка «Удалить» просто
+    не работала на любом процессе, доведённом до брони.
+    """
+    from web.models import Booking, Job, JobLog
+    from web.services.runner import delete_job
+
+    job = _make_job(db, "railway")
+    _booking_with_notifications(db, job)
+    db.add(JobLog(job_id=job.id, text="строка"))
+    db.commit()
+
+    delete_job(db, job)
+
+    assert db.get(Job, job.id) is None
+    assert db.query(Booking).count() == 0
+    assert db.query(JobLog).count() == 0
+
+
+def test_send_history_survives_job_deletion(db) -> None:
+    """
+    История отправок переживает процесс намеренно.
+
+    Запись «ссылка на оплату ушла на такой-то адрес» ценна сама по себе —
+    особенно если бронь была настоящей и оплаченной.
+    """
+    from web.models import NotificationLog
+    from web.services.runner import delete_job
+
+    job = _make_job(db, "railway")
+    _booking_with_notifications(db, job)
+
+    delete_job(db, job)
+
+    logs = db.query(NotificationLog).all()
+    assert len(logs) == 2
+    assert all(log.booking_id is None for log in logs)
+    assert {log.recipient for log in logs} == {"boss@example.tm", "+99361234567"}
+
+
+def test_labelled_captcha_survives_job_deletion(db) -> None:
+    """Размеченная капча остаётся в журнале независимо от судьбы процесса."""
+    from web.models import CaptchaSample
+    from web.services.runner import delete_job
+
+    job = _make_job(db, "airlines")
+    db.add(
+        CaptchaSample(
+            service="airlines", job_id=job.id, file_path="hard/12345_abc.png",
+            correct_code="12345", status="labeled",
+        )
+    )
+    db.commit()
+
+    delete_job(db, job)
+
+    sample = db.query(CaptchaSample).one()
+    assert sample.job_id is None
+    assert sample.correct_code == "12345"
+
+
+def test_delete_removes_run_directory(db) -> None:
+    """В каталоге запуска лежит check.env с паролями — он не должен остаться."""
+    from web.services.bot_env import prepare_launch
+    from web.services.runner import delete_job
+
+    job = _make_job(db, "railway")
+    launch = prepare_launch(db, job)
+    job.run_dir = str(launch.run_dir)
+    db.commit()
+
+    assert launch.env_file.exists()
+    delete_job(db, job)
+    assert not launch.run_dir.exists()

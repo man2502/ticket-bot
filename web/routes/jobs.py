@@ -26,9 +26,15 @@ from web.models import (
     Station,
     User,
 )
-from web.services.bot_env import cleanup_run_dir
 from web.services.passengers import validate_group
-from web.services.runner import JobStartError, active_job_id, is_running, start_job, stop_job
+from web.services.runner import (
+    JobStartError,
+    active_job_id,
+    delete_job,
+    is_running,
+    start_job,
+    stop_job,
+)
 from web.services.settings import get_service_config, missing_credentials
 from web.templating import render
 
@@ -354,10 +360,7 @@ def delete(
         # и остановить его стало бы нечем.
         stop_job(db, job)
 
-    # В каталоге запуска лежит check.env с паролями — убираем вместе с процессом.
-    cleanup_run_dir(job)
-    db.delete(job)
-    db.commit()
+    delete_job(db, job)
     return RedirectResponse("/jobs", status_code=status.HTTP_303_SEE_OTHER)
 
 

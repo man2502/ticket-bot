@@ -419,7 +419,12 @@ class NotificationLog(Base):
     __tablename__ = "notification_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    booking_id: Mapped[int | None] = mapped_column(ForeignKey("bookings.id"), nullable=True)
+    # SET NULL, а не каскад: запись о том, что ссылка на оплату ушла на такой-то
+    # адрес, ценна сама по себе. Удаление процесса не должно стирать
+    # доказательство отправки — особенно если бронь была настоящей и оплаченной.
+    booking_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bookings.id", ondelete="SET NULL"), nullable=True
+    )
     channel: Mapped[str] = mapped_column(String(16))  # email | sms
     recipient: Mapped[str] = mapped_column(String(255))
     subject: Mapped[str] = mapped_column(String(255), default="")
@@ -446,7 +451,11 @@ class CaptchaSample(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     service: Mapped[str] = mapped_column(String(16), index=True)
-    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"), nullable=True)
+    # Тоже SET NULL: размеченная капча остаётся в датасете и в журнале
+    # независимо от того, жив ли процесс, при котором она появилась.
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
     file_path: Mapped[str] = mapped_column(String(255))
     cnn_guess: Mapped[str] = mapped_column(String(16), default="")
     cnn_confidence: Mapped[float] = mapped_column(default=0.0)
