@@ -171,9 +171,28 @@ def test_unknown_type_is_rejected() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_doc_number_is_uppercased_and_stripped() -> None:
-    """Люди пишут номер с пробелами и дефисами — перевозчик ждёт слитно."""
-    assert _form(doc_number="aa 12-34567").doc_number == "AA1234567"
+def test_doc_number_keeps_separators() -> None:
+    """
+    Туркменский паспорт — «I-LB 897989», и уходит он перевозчику именно так.
+
+    Прежняя версия вырезала дефис и пробел, молча превращая номер
+    в «ILB897989»: бронь ушла бы с неверным документом, а выяснилось бы
+    это на регистрации.
+    """
+    assert _form(doc_number="I-LB 897989").doc_number == "I-LB 897989"
+
+
+def test_doc_number_is_uppercased() -> None:
+    assert _form(doc_number="i-lb 897989").doc_number == "I-LB 897989"
+
+
+def test_doc_number_extra_spaces_collapsed() -> None:
+    """Лишние пробелы убираем, но сам разделитель остаётся."""
+    assert _form(doc_number="  I-LB   897989  ").doc_number == "I-LB 897989"
+
+
+def test_plain_doc_number_still_works() -> None:
+    assert _form(doc_number="AA1234567").doc_number == "AA1234567"
 
 
 def test_short_doc_number_is_rejected() -> None:
@@ -182,6 +201,18 @@ def test_short_doc_number_is_rejected() -> None:
 
 def test_doc_number_with_symbols_is_rejected() -> None:
     assert "doc_number" in _form(doc_number="AA123/456").errors
+
+
+def test_doc_number_without_digits_is_rejected() -> None:
+    """Номер без единой цифры — почти наверняка в поле попало не то."""
+    assert "doc_number" in _form(doc_number="PASSPORT").errors
+
+
+def test_normalized_form_matches_the_same_document() -> None:
+    """«I-LB 897989» и «ILB897989» — один паспорт, записанный по-разному."""
+    from web.services.passengers import normalize_doc_number
+
+    assert normalize_doc_number("I-LB 897989") == normalize_doc_number("ilb897989")
 
 
 def test_empty_doc_number_is_rejected() -> None:

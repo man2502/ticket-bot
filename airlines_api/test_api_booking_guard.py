@@ -163,7 +163,9 @@ def _stub_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARRIVAL_PORT_CODE", "MYP")
     monkeypatch.setattr(api_booking, "get_passengers", lambda **_k: list(PAX))
     monkeypatch.setattr(api_booking, "parse_availability", lambda _body: _info())
-    monkeypatch.setattr(api_booking, "build_create_booking_payload", lambda *a, **k: {"searchKey": "SK-1"})
+    # build_create_booking_payload НЕ подменяем: заглушка прятала бы расхождения
+    # с настоящим форматом запроса — именно там и жили баги с номером документа
+    # и сроком его действия.
     monkeypatch.setattr(api_booking, "notify", lambda *a, **k: True)
 
 
@@ -254,3 +256,94 @@ def test_pending_survives_process_death(tmp_path: Path, monkeypatch: pytest.Monk
     fresh = BookingGuard(journal)
     blocker = fresh.blocking_attempt()
     assert blocker is not None and blocker.status == UNKNOWN
+
+
+# --------------------------------------------------------------------------
+# Соответствие payload реальному API
+# --------------------------------------------------------------------------
+
+
+def _pax_full(**over) -> dict:
+    data = {
+        "id": "1",
+        "type": "adult",
+        "first_name": "BABAJAN",
+        "last_name": "DEMIRKULYYEV",
+        "dob": "02.10.1999",
+        "gender": "M",
+        # Туркменский паспорт: разделители — часть номера.
+        "doc_number": "I-LB 897989",
+        "doc_expdt": "30.07.2027",
+        "citizenship": "TM",
+    }
+    data.update(over)
+    return data
+
+
+def test_document_number_keeps_separators(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Перевозчик ждёт «I-LB 897989» — ровно так, как в паспорте."""
+    from api_booking import build_create_booking_payload
+
+    payload = build_create_booking_payload(_info(), _offer(), passengers=[_pax_full()])
+    assert payload["adultdocser1"] == "I-LB 897989"
+
+
+def test_real_expiry_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Настоящий срок документа, а не «сегодня + год».
+
+    Раньше введённое значение выбрасывалось, и в бронь уходила выдуманная
+    дата — формально проходило, но данные брони не совпадали с паспортом.
+    """
+    from api_booking import build_create_booking_payload
+
+    payload = build_create_booking_payload(_info(), _offer(), passengers=[_pax_full()])
+    assert payload["adultexpdt1"] == "07/30/2027"
+
+
+def test_expiry_falls_back_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Поле обязательное: без него бронь не пройдёт вовсе."""
+    from api_booking import build_create_booking_payload, doc_expiry_default
+
+    payload = build_create_booking_payload(
+        _info(), _offer(), passengers=[_pax_full(doc_expdt="")]
+    )
+    assert payload["adultexpdt1"] == doc_expiry_default()
+
+
+def test_broken_expiry_does_not_kill_booking(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Неразобранная дата в одном поле не должна ронять весь запуск."""
+    from api_booking import build_create_booking_payload, doc_expiry_default
+
+    payload = build_create_booking_payload(
+        _info(), _offer(), passengers=[_pax_full(doc_expdt="когда-нибудь")]
+    )
+    assert payload["adultexpdt1"] == doc_expiry_default()
+
+
+def test_dates_are_month_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    API ждёт MM/DD/YYYY — это видно по departDate «08/20/2026».
+
+    Перепутанный порядок дал бы неверную дату рождения в брони.
+    """
+    from api_booking import build_create_booking_payload
+
+    payload = build_create_booking_payload(
+        _info(), _offer(), passengers=[_pax_full(dob="02.10.1999")]
+    )
+    assert payload["adultdob1"] == "10/02/1999"
+
+
+def test_payload_has_every_field_the_api_expects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Набор полей сверен с рабочим запросом CreateBooking."""
+    from api_booking import build_create_booking_payload
+
+    payload = build_create_booking_payload(_info(), _offer(), passengers=[_pax_full()])
+    expected = {
+        "searchKey", "tripType", "resident", "searchId", "bookingClassId", "paymentType",
+        "adultgender1", "adultname1", "adultsurname1", "adultdob1",
+        "adultcitizenid1", "adultdocser1", "adultexpdt1",
+        "contactName", "contactSurname", "contactEmail", "subscriberNumber",
+    }
+    assert expected <= set(payload)

@@ -135,9 +135,9 @@ async def test_smtp(
     result = send_email(
         db,
         to=target,
-        subject="Проверка связи — панель билетов",
+        subject="Проверка связи — T-sender",
         body=(
-            "Это тестовое письмо из панели билетов.\n\n"
+            "Это тестовое письмо из T-sender.\n\n"
             "Если оно дошло, ссылка на оплату брони тоже дойдёт."
         ),
     )
@@ -173,7 +173,7 @@ async def test_sms(
             message="Укажите номер для проверки или заполните получателя по умолчанию",
         )
 
-    result = send_sms(db, phone=target, message="Проверка связи — панель билетов")
+    result = send_sms(db, phone=target, message="Проверка связи — T-sender")
     return _page(request, user, db, message=f"SMS: {result.summary()}", is_error=not result.ok)
 
 

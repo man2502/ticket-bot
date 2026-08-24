@@ -31,6 +31,7 @@ __all__ = [
     "export_for_bot",
     "validate_group",
     "normalize_phone",
+    "normalize_doc_number",
     "pax_type_on_date",
     "format_dob",
     "GENDERS",
@@ -53,8 +54,13 @@ _VALID_PAX_TYPES = {value for value, _ in PAX_TYPES}
 # латиницей, а кириллица уходит на сайт как есть и ломает бронь.
 _NAME_RE = re.compile(r"^[A-Za-z][A-Za-z\s'\-]{0,63}$")
 
-# Номер документа: буквы и цифры, без пробелов и разделителей.
-_DOC_RE = re.compile(r"^[A-Za-z0-9]{5,20}$")
+# Номер документа: буквы, цифры, дефисы и пробелы.
+#
+# Разделители ОБЯЗАТЕЛЬНО сохраняются. Туркменский паспорт выглядит как
+# «I-LB 897989», и именно в таком виде номер уходит в CreateBooking. Прежняя
+# версия вырезала пробелы и дефисы, молча превращая номер в «ILB897989», —
+# бронь ушла бы с неверным документом, а выяснилось бы это на регистрации.
+_DOC_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 \-]{3,29}$")
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -194,13 +200,30 @@ def _clean_doc_expiry(value: str, errors: dict[str, str]) -> str:
     return f"{parsed.day:02d}.{parsed.month:02d}.{parsed.year}"
 
 
+def normalize_doc_number(value: str) -> str:
+    """
+    Номер без разделителей — только для сравнения, не для отправки.
+
+    Нужен, чтобы «I-LB 897989» и «ILB897989» опознавались как один документ
+    и человек не завёл одного пассажира дважды.
+    """
+    return re.sub(r"[\s\-]", "", (value or "")).upper()
+
+
 def _clean_doc_number(value: str, errors: dict[str, str]) -> str:
-    text = re.sub(r"[\s\-]", "", (value or "").strip()).upper()
+    # Пробелы схлопываем и обрезаем по краям, но НЕ вырезаем: разделители
+    # входят в номер и должны уйти перевозчику как есть.
+    text = " ".join((value or "").split()).upper()
+
     if not text:
         errors["doc_number"] = "Номер документа: не заполнен"
         return ""
     if not _DOC_RE.match(text):
-        errors["doc_number"] = "Номер документа: 5-20 символов, буквы и цифры"
+        errors["doc_number"] = "Номер документа: 4-30 символов — буквы, цифры, дефис, пробел"
+        return text
+    if not any(ch.isdigit() for ch in text):
+        # Номер без единой цифры — почти наверняка в поле попало не то.
+        errors["doc_number"] = "Номер документа: должна быть хотя бы одна цифра"
     return text
 
 

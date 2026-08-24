@@ -26,6 +26,7 @@ from web.services.passengers import (
     PAX_TYPES,
     PassengerForm,
     clean_passenger_form,
+    normalize_doc_number,
     pax_type_on_date,
 )
 from web.templating import render
@@ -77,6 +78,26 @@ def _form_from_passenger(passenger: Passenger) -> PassengerForm:
         pax_type=passenger.pax_type,
         note=passenger.note,
     )
+
+
+def _find_by_document(db: Session, doc_number: str, *, exclude_id: int | None = None):
+    """
+    Пассажир с таким же документом, как бы тот ни был записан.
+
+    Сравниваем без разделителей: «I-LB 897989» и «ILB897989» — один и тот же
+    паспорт. В базе уникальность стоит по сырому полю и такую пару пропустила бы,
+    а два одинаковых пассажира в брони — это отказ сервера на этапе оплаты.
+    """
+    wanted = normalize_doc_number(doc_number)
+    if not wanted:
+        return None
+
+    for existing in db.query(Passenger).all():
+        if exclude_id is not None and existing.id == exclude_id:
+            continue
+        if normalize_doc_number(existing.doc_number) == wanted:
+            return existing
+    return None
 
 
 async def _form_data(request: Request) -> dict[str, str]:
@@ -163,6 +184,14 @@ async def create_passenger(
     if not form.is_valid:
         return _render_form(request, user, form)
 
+    duplicate = _find_by_document(db, form.doc_number)
+    if duplicate is not None:
+        return _render_form(
+            request, user, form,
+            error=f"Документ {form.doc_number} уже записан на "
+                  f"{duplicate.last_name} {duplicate.first_name}",
+        )
+
     passenger = Passenger(**form.as_dict(), created_by_id=user.id)
     db.add(passenger)
     try:
@@ -221,6 +250,14 @@ async def update_passenger(
     form = clean_passenger_form(await _form_data(request))
     if not form.is_valid:
         return _render_form(request, user, form, passenger=passenger)
+
+    duplicate = _find_by_document(db, form.doc_number, exclude_id=passenger.id)
+    if duplicate is not None:
+        return _render_form(
+            request, user, form, passenger=passenger,
+            error=f"Документ {form.doc_number} уже записан на "
+                  f"{duplicate.last_name} {duplicate.first_name}",
+        )
 
     for field, value in form.as_dict().items():
         setattr(passenger, field, value)

@@ -97,7 +97,7 @@ def send_email(db, *, to: str, subject: str, body: str) -> SendResult:
 
     message = MIMEText(body, "plain", "utf-8")
     message["Subject"] = subject
-    message["From"] = formataddr(("Панель билетов", sender))
+    message["From"] = formataddr(("T-sender", sender))
     message["To"] = ", ".join(recipients)
 
     try:

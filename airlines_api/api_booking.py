@@ -451,13 +451,39 @@ def parse_availability(body: dict[str, Any] | str) -> AvailabilityInfo | None:
 
 
 def doc_expiry_default(*, on: dt.date | None = None) -> str:
-    """Срок документа для API: сегодня + 1 год (MM/DD/YYYY)."""
+    """
+    Запасной срок документа: сегодня + 1 год (MM/DD/YYYY).
+
+    Используется, только когда настоящий срок не заполнен. Поле обязательное
+    для CreateBooking, и без него бронь не пройдёт вовсе — но подставлять
+    выдуманную дату при известной настоящей неправильно.
+    """
     today = on or dt.date.today()
     try:
         exp = today.replace(year=today.year + 1)
     except ValueError:
         exp = today.replace(year=today.year + 1, day=28)
     return f"{exp.month:02d}/{exp.day:02d}/{exp.year}"
+
+
+def passenger_doc_expiry(pax: dict) -> str:
+    """
+    Срок документа пассажира в формате API.
+
+    Раньше настоящий срок игнорировался и всем подставлялось «сегодня + год»:
+    человек заполнял поле в панели, а перевозчику уходила выдуманная дата.
+    Формально бронь проходила, но данные брони не совпадали с паспортом.
+    """
+    raw = str(pax.get("doc_expdt") or "").strip()
+    if not raw:
+        return doc_expiry_default()
+    try:
+        return to_api_date(raw)
+    except SystemExit:
+        # to_api_date сообщает о неразобранной дате выходом из процесса —
+        # для одного поля брони это слишком, берём запасной вариант.
+        print(f"[book-api] не разобрал срок документа {raw!r} — беру запасной")
+        return doc_expiry_default()
 
 
 def gender_api(raw: str) -> str:
@@ -518,7 +544,6 @@ def build_create_booking_payload(
         "paymentType": payment_type(),
     }
 
-    expdt = doc_expiry_default()
     for pax_type in ("adult", "child", "infant"):
         prefix = PAX_PREFIX[pax_type]
         for idx, pax in enumerate(grouped[pax_type], start=1):
@@ -527,8 +552,10 @@ def build_create_booking_payload(
             payload[f"{prefix}surname{idx}"] = pax["last_name"]
             payload[f"{prefix}dob{idx}"] = to_api_date(pax["dob"])
             payload[f"{prefix}citizenid{idx}"] = citizen_id(pax.get("citizenship", "TM"))
+            # Номер уходит как в паспорте, с разделителями: «I-LB 897989».
             payload[f"{prefix}docser{idx}"] = pax["doc_number"]
-            payload[f"{prefix}expdt{idx}"] = expdt
+            # Срок берётся у пассажира; запасной вариант — только если не заполнен.
+            payload[f"{prefix}expdt{idx}"] = passenger_doc_expiry(pax)
 
     contact_name, contact_surname, contact_email, contact_phone = _contact_person(passengers)
     payload["contactName"] = contact_name
