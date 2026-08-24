@@ -1,33 +1,57 @@
-.env
-.env.local
-profiles/*
-!profiles/example.env
+# --- окружение и мусор интерпретатора ---
 .venv/
+*/.venv/
 __pycache__/
 *.pyc
+.DS_Store
+
+# --- настройки с секретами ---
+# Шаблоны (*.example) в git есть, заполненные копии — нет.
+.env
+.env.local
+*/.env
+*/.env.local
+*/*/.env
+*/*/.env.local
+
+# check.env боты читают при запуске из CLI; там маршрут, дата и пароли.
+check.env
+*/check.env
+*/*/check.env
+
+# Профили браузерного бота: свой маршрут и логин в каждом.
+profiles/*
+!profiles/example.env
+
+# --- данные пассажиров ---
+passenger.json
+passengers.json
+
+# --- веб-панель ---
+# База, ключи шифрования, картинки капч, временные env запусков.
+# Ключи в git не попадают никогда: с ними база перестаёт защищать пароли.
+web/data/
+
+# --- рабочие файлы ботов ---
+# Журналы броней: номера броней и ссылки на оплату.
+*_bookings.json
+# Состояние мониторинга: что видели в прошлый раз.
+*_state.json
 .state.json
 .search_rate_*.json
+.last_bank_url.txt
+
+# railway_stations.json намеренно ОСТАЁТСЯ в git: это запасной справочник,
+# по которому бот показывает названия станций, когда API недоступен.
+
+# --- датасеты и отладка капчи ---
+captcha_dataset/
+captcha_dataset_api/
+.cursor-captcha-agent
+api_captcha_last.png
+
+# --- отладка браузерного бота ---
 .debug/
 .debug_*.html
 playwright-report/
-.DS_Store
-passenger.json
-passengers.json
-.cursor-captcha-agent
-captcha_dataset/
-
-# Подпроекты — см. airlines_web/, airlines_api/, chapar/, railway-api/
-airlines_web/.venv/
-airlines_api/.venv/
-chapar/.venv/
-railway-api/.venv/
 mitmweb-flows/
-
-# Веб-панель: база, ключи шифрования, картинки капч, временные env запусков.
-# Ключи в git не попадают никогда — с ними база перестаёт защищать пароли.
-web/data/
-
-# Журналы броней ботов: содержат номера броней и ссылки на оплату.
-railway-api/railway_bookings.json
-airlines_api/api_bookings.json
-airlines_web/web_bookings.json

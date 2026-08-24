@@ -451,3 +451,38 @@ code {
 .blocker .grid th { width: 130px; text-transform: none; font-size: 13px; }
 
 .grid a[target="_blank"] { color: var(--accent); }
+
+/* -------------------------------------------------------------- капчи */
+
+.captcha-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.captcha-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Белый фон под картинкой: капча приходит на светлом, и на тёмной панели
+   без подложки цифры сливаются. */
+.captcha-card img {
+  width: 100%;
+  background: #fff;
+  border-radius: 6px;
+  image-rendering: pixelated;
+}
+
+.captcha-hint { font-size: 12px; color: var(--muted); }
+
+.captcha-form { display: flex; gap: 6px; }
+.captcha-form input { margin-top: 0; text-align: center; letter-spacing: 3px; }
+.captcha-form button { white-space: nowrap; padding: 8px 12px; }
+.captcha-form:last-child button { width: 100%; }

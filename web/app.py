@@ -21,6 +21,7 @@ from web.models import User
 from web.routes import (
     auth,
     bookings,
+    captcha,
     dashboard,
     jobs,
     passengers,
@@ -40,6 +41,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(bookings.router)
+app.include_router(captcha.router)
 app.include_router(jobs.router)
 app.include_router(passengers.router)
 app.include_router(settings_routes.router)

@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Капчи{% endblock %}
+
+{% block content %}
+<h1>Капчи</h1>
+
+{% if message %}
+  <div class="alert {{ 'error' if is_error else 'ok' }}">{{ message }}</div>
+{% endif %}
+
+{% if broken %}
+  <div class="alert error">Не удалось прочитать датасет: {{ broken }}</div>
+{% endif %}
+
+<p class="muted small">
+  Сюда попадает то, что модель не смогла решить. Процесс поиска при этом
+  не ждёт человека — он просто берёт новую капчу. Размеченное идёт в обучающую
+  выборку.
+</p>
+
+{% if counters %}
+<div class="cards">
+  <div class="card {% if counters.rejected %}card-alert{% endif %}">
+    <div class="card-value">{{ counters.rejected }}</div>
+    <div class="card-label">ошибок модели</div>
+  </div>
+  <div class="card">
+    <div class="card-value">{{ counters.unlabeled }}</div>
+    <div class="card-label">без кода</div>
+  </div>
+  <div class="card">
+    <div class="card-value">{{ counters.hard }}</div>
+    <div class="card-label">размечено вручную</div>
+  </div>
+  <div class="card">
+    <div class="card-value">{{ counters.confirmed }}</div>
+    <div class="card-label">принято сервером</div>
+  </div>
+</div>
+{% endif %}
+
+{% if items %}
+<h2>На разметку — {{ items|length }}</h2>
+<p class="muted small">{{ hint }}</p>
+
+<div class="captcha-grid">
+  {% for item in items %}
+  <div class="captcha-card">
+    {# no-store на роуте: после разметки файла уже нет, и кеш показал бы
+       «призрак», который нельзя ни разметить, ни убрать. #}
+    <img src="/captcha/image/{{ item.name }}" alt="капча" loading="lazy">
+
+    <div class="captcha-hint">{{ item.hint }}</div>
+    {% if item.modified %}
+      <div class="muted small">{{ item.modified.strftime('%d.%m %H:%M') }}</div>
+    {% endif %}
+
+    <form method="post" action="/captcha/label" class="captcha-form">
+      <input type="hidden" name="name" value="{{ item.name }}">
+      <input name="code" inputmode="numeric" autocomplete="off"
+             maxlength="{{ digits }}" placeholder="{{ digits }} цифр" required>
+      <button type="submit">Сохранить</button>
+    </form>
+
+    <form method="post" action="/captcha/discard" class="captcha-form"
+          onsubmit="return confirm('Удалить нечитаемую картинку?')">
+      <input type="hidden" name="name" value="{{ item.name }}">
+      <button type="submit" class="secondary-btn">Не читается</button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+{% elif not broken %}
+<div class="alert info">
+  Нечего размечать — модель справляется. Картинки появятся здесь, когда
+  сервер отвергнет её вариант.
+</div>
+{% endif %}
+
+{% if recent %}
+<h2>Последняя разметка</h2>
+<table class="grid">
+  <thead>
+    <tr><th>Когда</th><th>Было у модели</th><th>Правильный код</th><th>Итог</th></tr>
+  </thead>
+  <tbody>
+    {% for row in recent %}
+    <tr>
+      <td class="muted small">{{ row.labeled_at.strftime('%d.%m %H:%M') }}</td>
+      <td class="small">{{ row.cnn_guess or '—' }}</td>
+      <td class="small">{{ row.correct_code or '—' }}</td>
+      <td>
+        {% if row.status == 'labeled' %}
+          <span class="tag tag-ok">в обучение</span>
+        {% else %}
+          <span class="tag">удалена</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

@@ -158,9 +158,17 @@ def mark_hard(
 
 
 def parse_rejected_filename(path: Path) -> dict[str, str] | None:
-    """Разбор имени rejected: wrong_code, source, reason, hash."""
+    """
+    Разбор имени rejected: wrong_code, source, reason, hash.
+
+    reason берётся жадно, до хеша, потому что сам он может содержать
+    подчёркивания: `save_rejected` вызывается с `mismatch_manual`
+    и `server_mismatch`. Со строгим `[^_]+` разбирался только `invalid`,
+    и для двух причин из трёх мета молча терялась — разметка показывала
+    «код неизвестен» там, где вариант модели на самом деле был.
+    """
     m = re.match(
-        rf"^(\d{{{N_DIGITS}}})_([^_]+)_([^_]+)_([a-f0-9]{{12}})\.png$",
+        rf"^(\d{{{N_DIGITS}}})_([^_]+)_(.+)_([a-f0-9]{{12}})\.png$",
         path.name,
         re.I,
     )

@@ -82,9 +82,13 @@ curl --request GET \
 
 ## Тесты
 
+Из корня репозитория:
+
 ```bash
-../.venv/bin/python -m pytest railway/ -q      # из корня репозитория
+python run_tests.py railway-api
 ```
+
+Раннер работает и без установленного pytest — см. корневой README.
 
 ## Env
 

@@ -1,4 +1,4 @@
-"""Обзорная страница и заглушки разделов, которые делаются на следующих этапах."""
+"""Обзорная страница: счётчики, состояние справочников, последние процессы."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
-from web.auth import require_admin, require_user
+from web.auth import require_user
 from web.db import get_db
 from web.models import Job, JobStatus, Passenger, Service, Station, User
 from web.templating import render
@@ -48,12 +48,5 @@ def dashboard(
     )
 
 
-def _placeholder(request: Request, user: User, title: str, note: str) -> HTMLResponse:
-    return render(request, "placeholder.html", user, title=title, note=note)
-
-
-@router.get("/captcha", response_class=HTMLResponse)
-def captcha_page(request: Request, user: User = Depends(require_admin)) -> HTMLResponse:
-    return _placeholder(request, user, "Капчи", "Разметка нерешённых капч — этап 8.")
 
 

@@ -54,9 +54,12 @@ Cookies не используются — только Bearer-токены.
 
 ## Капча
 
-Ручной ввод в терминале (`CAPTCHA_API_MANUAL=1` в `airlines_api/.env.local`).
+При запуске из CLI — ручной ввод в терминале (`CAPTCHA_API_MANUAL=1`
+в `airlines_api/.env.local`). Веб-панель запускает бота с `CAPTCHA_API_MANUAL=0`:
+процесс не должен ждать человека, нерешённые капчи уходят в раздел «Капчи».
 
-Обучение 5-цифровой CNN (pretrain из браузерной `airlines_web/captcha_model.pt` — та же капча, 6→5 цифр):
+Обучение 5-цифровой CNN (pretrain из браузерной
+`other/airlines_web/captcha_model.pt` — та же капча, 6→5 цифр):
 
 ```bash
 ../.venv/bin/python label_api_captcha.py
@@ -64,6 +67,9 @@ Cookies не используются — только Bearer-токены.
 ../.venv/bin/python train_captcha_cnn_api.py
 # без pretrain: --no-pretrain
 ```
+
+Размечать удобнее в панели: раздел «Капчи» показывает картинку рядом
+с вариантом модели и сам раскладывает файлы по папкам датасета.
 
 ## Авто-бронь
 
