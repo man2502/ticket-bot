@@ -237,10 +237,12 @@ def missing_credentials(db, service: str) -> list[str]:
 
     config = get_service_config(db, service)
     missing: list[str] = []
-    if not config.login:
-        missing.append("телефон личного кабинета")
-    if not config.password_enc:
-        missing.append("пароль личного кабинета")
+    # Формулировки совпадают с подписями в форме — иначе человек ищет поле,
+    # которого на странице нет.
     if not config.extra_password_enc:
-        missing.append("пароль приложения")
+        missing.append("пароль учётки приложения")
+    if not config.login:
+        missing.append("телефон вашего аккаунта T5")
+    if not config.password_enc:
+        missing.append("пароль вашего аккаунта T5")
     return missing
