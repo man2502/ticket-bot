@@ -233,6 +233,23 @@ def test_bot_email_is_not_configured(db) -> None:
     assert "GMAIL_APP_PASSWORD" not in values
 
 
+@pytest.mark.parametrize("service", ["railway", "airlines"])
+def test_bot_is_told_notifications_are_external(db, service: str) -> None:
+    """
+    Оба сервиса получают NOTIFY_EXTERNAL=1.
+
+    Без него бот на каждом запуске писал в лог «Gmail не настроен: нужны
+    GMAIL_USER…». Настраивать там нечего — рассылает панель, — но человек
+    видел это как ошибку и шёл искать несуществующую проблему.
+    """
+    from web.services.bot_env import prepare_launch
+
+    job = _make_job(db, service)
+    values = _env_values(prepare_launch(db, job).env_file)
+
+    assert values["NOTIFY_EXTERNAL"] == "1"
+
+
 def test_tokens_are_not_saved_into_module(db) -> None:
     """Панель не должна править файлы модуля бота."""
     from web.services.bot_env import prepare_launch

@@ -27,7 +27,12 @@ bootstrap(__file__)
 from core.booking_guard import BookingGuard
 from core.slots import now_second, precise_sleep, seconds_until_second
 from core.state import load_json, save_json
-from notify_helper import flush_notifications, gmail_configured, notify
+from notify_helper import (
+    flush_notifications,
+    gmail_configured,
+    notifications_delegated,
+    notify,
+)
 from passenger_loader import format_passenger_names, get_passenger_ids
 from railway_client import RequestFailed, ResultUnknown, warmup_connection
 from railway_env import env, load_railway_env, route_line, to_railway_date
@@ -638,9 +643,13 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
         print(f"Рейс: все | {railway_strict_label()}")
     print(f"Пассажиры: {env('PASSENGER_IDS') or get_passenger_ids()[0]}")
     print(f"Слот: 1-й в :{at_sec:02d} +0/0.1/0.2с, 2-й случайно :{SECOND_SLOT_SEC_MIN}–:{SECOND_SLOT_SEC_MAX}")
-    print(f"[notify] {'Gmail настроен' if gmail_configured() else 'только macOS + консоль'}")
+    if notifications_delegated():
+        # Запуск из панели: она сама читает журнал броней и шлёт письмо и SMS.
+        print("[notify] уведомления рассылает панель")
+    else:
+        print(f"[notify] {'Gmail настроен' if gmail_configured() else 'только macOS + консоль'}")
     if auto_book_enabled():
-        print("[book-railway] RAILWAY_AUTO_BOOK=1 — при местах: выбор мест + бронь + email с URL оплаты")
+        print("[book-railway] RAILWAY_AUTO_BOOK=1 — при местах: выбор мест + бронь + ссылка на оплату")
         print(
             f"[book-railway] мультимедиа Wi‑Fi: "
             f"{'да' if multimedia_enabled() else 'нет'} (RAILWAY_MULTIMEDIA)"

@@ -9,9 +9,10 @@ User-Agent, backoff, защита от повторной брони) при э�
 `load_dotenv(path, override=True)`, и он перезаписал бы всё, что мы передали
 через `os.environ`. Файл — единственный способ говорить с ботом на его языке.
 
-Почта у бота намеренно НЕ настраивается: `GMAIL_*` не передаём, поэтому
-`gmail_configured()` вернёт False и бот только напечатает результат. Рассылает
-панель — у неё и настройки, и история отправок.
+Почта у бота намеренно НЕ настраивается: `GMAIL_*` не передаём, а вместо них
+ставим `NOTIFY_EXTERNAL=1`. Бот тогда не пытается слать письма и, что важнее,
+не пишет в лог «Gmail не настроен» — при запуске из панели это ложная тревога.
+Рассылает панель: у неё и настройки, и история отправок.
 """
 
 from __future__ import annotations
@@ -111,6 +112,9 @@ def _railway_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> dic
     params = job.params
 
     values: dict[str, Any] = {
+        # Рассылку берёт на себя панель — бот не должен ни слать письма,
+        # ни жаловаться, что Gmail не настроен.
+        "NOTIFY_EXTERNAL": "1",
         "SOURCE_STATION_ID": job.source,
         "DESTINATION_STATION_ID": job.destination,
         "DATE": job.depart_date,
@@ -140,6 +144,8 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
     params = job.params
 
     values: dict[str, Any] = {
+        # См. комментарий в _railway_env: письма и SMS отправляет панель.
+        "NOTIFY_EXTERNAL": "1",
         "DEPART_PORT_CODE": job.source,
         "ARRIVAL_PORT_CODE": job.destination,
         "DATE": job.depart_date,

@@ -75,7 +75,12 @@ from api_booking import (
     flight_selection_label,
     try_auto_book,
 )
-from notify_helper import flush_notifications, gmail_configured, notify
+from notify_helper import (
+    flush_notifications,
+    gmail_configured,
+    notifications_delegated,
+    notify,
+)
 from passenger_loader import format_passenger_names, get_passenger_counts_by_type
 
 STATE_FILE = API_ROOT / "api_state.json"
@@ -1281,8 +1286,11 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
         if cnn_api_ready():
             print("[info] CNN есть — включи CAPTCHA_API_MANUAL=0 для авто-режима")
     if auto_book_enabled():
-        print("[book-api] API_AUTO_BOOK=1 — при местах: CreateBooking + email с URL оплаты")
-    if gmail_configured():
+        print("[book-api] API_AUTO_BOOK=1 — при местах: CreateBooking + ссылка на оплату")
+    if notifications_delegated():
+        # Запуск из панели: она сама читает журнал броней и шлёт письмо и SMS.
+        print("[notify] уведомления рассылает панель")
+    elif gmail_configured():
         to = env("NOTIFY_EMAIL") or env("GMAIL_USER") or ""
         print(f"[notify] Gmail настроен → {to}")
     else:
@@ -1373,10 +1381,13 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
 
                     if book_result.ok:
                         print(_green(f"[book-api] PNR={book_result.pnr} — бронь создана"))
-                        print(
-                            "[book-api] письмо с checkoutUrl должно быть в почте "
-                            f"({env('NOTIFY_EMAIL') or env('GMAIL_USER') or '—'})"
-                        )
+                        if notifications_delegated():
+                            print("[book-api] ссылку на оплату разошлёт панель")
+                        else:
+                            print(
+                                "[book-api] письмо с checkoutUrl должно быть в почте "
+                                f"({env('NOTIFY_EMAIL') or env('GMAIL_USER') or '—'})"
+                            )
                         booked = True
                     elif book_result.unknown:
                         # Повторять нельзя: вторая попытка = вторая настоящая бронь.

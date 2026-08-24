@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.env import env  # noqa: E402
+from core.env import env, env_flag  # noqa: E402
 
 
 # Реализация общая — core.env (там же описано, почему пустое значение = default).
@@ -66,7 +66,24 @@ def _gmail_password() -> str:
     return raw.replace(" ", "").replace("\t", "")
 
 
+def notifications_delegated() -> bool:
+    """
+    Уведомления рассылает кто-то снаружи — боту слать не надо.
+
+    Так работает веб-панель: она читает журнал броней, сама шлёт письмо и SMS
+    и ведёт историю отправок. Без этого флага бот при каждом запуске писал
+    «Gmail не настроен: нужны GMAIL_USER…», хотя настраивать ничего не нужно, —
+    человек видел в логе ложную тревогу.
+
+    При запуске из командной строки флаг не выставляется, и почта работает
+    по-прежнему.
+    """
+    return env_flag("NOTIFY_EXTERNAL")
+
+
 def gmail_configured() -> bool:
+    if notifications_delegated():
+        return False
     user = env("GMAIL_USER") or env("SMTP_USER")
     password = _gmail_password()
     return bool(user and password and _notify_emails())
@@ -79,7 +96,12 @@ def notify_gmail(subject: str, body: str) -> bool:
       GMAIL_USER=you@gmail.com
       GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
       NOTIFY_EMAIL=a@gmail.com, b@gmail.com, c@gmail.com
+
+    При NOTIFY_EXTERNAL=1 не делает ничего и молчит: рассылает панель.
     """
+    if notifications_delegated():
+        return False
+
     user = env("GMAIL_USER") or env("SMTP_USER")
     password = _gmail_password()
     recipients = _notify_emails()
