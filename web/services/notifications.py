@@ -198,10 +198,54 @@ def send_sms(db, *, phone: str, message: str) -> SendResult:
             error=f"HTTP {response.status}: {response.safe_text(200)}",
         )
 
+    # Кода 200 недостаточно. Шлюзы часто отвечают 200 и на отказ, сообщая
+    # о нём в теле — например `{"success":"false","message":"param gelmedi"}`.
+    # Поверив одному лишь статусу, панель записала бы «доставлено» там, где
+    # SMS не ушла, и человек ждал бы ссылку на оплату впустую.
+    failure = _gateway_failure(response.json)
+    if failure:
+        return SendResult(
+            ok=False, channel="sms", recipient=phone,
+            error=f"шлюз отказал: {failure}",
+        )
+
     return SendResult(
         ok=True, channel="sms", recipient=phone,
         detail=f"HTTP {response.status}, {response.elapsed_ms:.0f} мс",
     )
+
+
+# Значения, которыми шлюзы обозначают неудачу. Строка "false" здесь не случайно:
+# на JavaScript-бэкендах её пишут вместо булева, и для JS она ещё и «истинна».
+_FALSE_VALUES = {"false", "0", "no", "error", "fail", "failed"}
+
+
+def _gateway_failure(body: object) -> str:
+    """
+    Текст ошибки, если тело ответа говорит об отказе. Пустая строка — всё хорошо.
+
+    Тело разбираем осторожно: у разных шлюзов поле называется `success`,
+    `status` или `error`, а тип значения бывает и булевым, и строковым.
+    Непонятный ответ считаем успехом — иначе рабочая отправка помечалась бы
+    неудачной из-за неизвестного нам формата.
+    """
+    if not isinstance(body, dict):
+        return ""
+
+    for key in ("success", "status", "ok", "result"):
+        if key not in body:
+            continue
+        value = body[key]
+        if value is False or (isinstance(value, str) and value.strip().lower() in _FALSE_VALUES):
+            return str(body.get("message") or body.get("error") or f"{key}={value!r}")[:200]
+
+    # Отдельное поле ошибки: непустое значение — это отказ.
+    for key in ("error", "err"):
+        value = body.get(key)
+        if value not in (None, "", 0, False):
+            return str(body.get("message") or value)[:200]
+
+    return ""
 
 
 # --------------------------------------------------------------------------- #

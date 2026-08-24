@@ -42,6 +42,20 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     runs.mkdir()
     monkeypatch.setattr(bot_env, "RUNS_DIR", runs)
 
+    # Журналы броней тоже во временную папку. Без этого тесты читали бы рабочий
+    # `railway-api/railway_bookings.json`, и настоящая бронь в нём валила бы их
+    # все разом: `start_job` справедливо отказывается запускать поиск, пока
+    # незакрытая попытка не снята человеком.
+    import web.services.bookings as bookings_module
+
+    journals = tmp_path / "journals"
+    journals.mkdir()
+    monkeypatch.setattr(
+        bookings_module,
+        "journal_path",
+        lambda service: journals / f"{service}_bookings.json",
+    )
+
     db_module.init_db()
     with db_module.session_scope() as session:
         yield session

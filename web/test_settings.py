@@ -370,10 +370,21 @@ def _setup_sms(db, **over) -> None:
 
 
 class _FakeResponse:
+    """Ответ шлюза. Повторяет core.http.Response в объёме, который читает send_sms."""
+
     def __init__(self, status=200):
         self.status = status
         self.elapsed_ms = 12.0
         self.text = '{"ok":true}'
+
+    @property
+    def json(self):
+        import json as _json
+
+        try:
+            return _json.loads(self.text)
+        except ValueError:
+            return None
 
     def safe_text(self, limit=600):
         return self.text
@@ -572,3 +583,91 @@ def test_booking_message_contains_link() -> None:
     assert "https://bank.tm/pay/1" in body
     assert "https://bank.tm/pay/1" in sms
     assert len(sms) < 200  # влезет в SMS
+
+
+# --------------------------------------------------------------------------
+# Шлюз отвечает 200, но отказывает
+# --------------------------------------------------------------------------
+
+
+class _BodyResponse(_FakeResponse):
+    """Ответ с разбираемым телом — как у настоящего шлюза."""
+
+    def __init__(self, payload, status=200):
+        super().__init__(status)
+        self._payload = payload
+
+    @property
+    def json(self):
+        return self._payload
+
+
+def _capture_with_body(monkeypatch: pytest.MonkeyPatch, payload, status: int = 200):
+    import web.services.notifications as notifications
+
+    class _FakeClient:
+        def __init__(self, base, headers_factory=None, **kw):
+            pass
+
+        def request(self, *a, **kw):
+            return _BodyResponse(payload, status)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(notifications, "HttpClient", _FakeClient)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        # Ровно то, что отвечает наш шлюз при нехватке параметров.
+        {"success": "false", "message": "<phone> yada <message> param gelmedi"},
+        {"success": False, "message": "нет баланса"},
+        {"status": "error", "message": "номер заблокирован"},
+        {"error": "invalid number"},
+        {"ok": False},
+    ],
+)
+def test_gateway_failure_in_body_is_not_success(
+    db, monkeypatch: pytest.MonkeyPatch, payload
+) -> None:
+    """
+    Код 200 сам по себе ничего не значит.
+
+    Шлюз может ответить 200 и сообщить об отказе в теле. Поверив статусу,
+    панель записала бы «доставлено» там, где SMS не ушла, и человек ждал бы
+    ссылку на оплату впустую.
+    """
+    from web.services.notifications import send_sms
+
+    _setup_sms(db)
+    _capture_with_body(monkeypatch, payload)
+
+    result = send_sms(db, phone="+99361234567", message="Привет")
+    assert result.ok is False
+    assert "шлюз отказал" in result.error
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"success": True},
+        {"success": "true"},
+        {"status": "ok", "id": 42},
+        {"error": 0},
+        {"message_id": "abc"},
+        None,          # тело не JSON
+        "OK",          # шлюз ответил простым текстом
+    ],
+)
+def test_successful_gateway_answers_are_accepted(
+    db, monkeypatch: pytest.MonkeyPatch, payload
+) -> None:
+    """Непонятный ответ считаем успехом: иначе рабочая отправка ложно падала бы."""
+    from web.services.notifications import send_sms
+
+    _setup_sms(db)
+    _capture_with_body(monkeypatch, payload)
+
+    assert send_sms(db, phone="+99361234567", message="Привет").ok is True
