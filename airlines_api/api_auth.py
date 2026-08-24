@@ -21,7 +21,7 @@ if str(REPO_ROOT) not in sys.path:
 from typing import Any
 
 from api_client import RequestFailed, api_call
-from api_env import api_secrets_env_path, build_api_headers, current_ios_user_agent, env
+from api_env import api_secrets_env_path, build_api_headers, env
 
 _AUTH_FINGERPRINT_KEY = "API_AUTH_FINGERPRINT"
 
@@ -90,11 +90,29 @@ def _client_login_headers() -> dict[str, str]:
     return {"content-type": "application/json"}
 
 
+# Вход в личный кабинет приложение T5 делает не тем же клиентом, что поиск:
+# по рабочим запросам видно `Dart/3.11 (dart:io)` — это Flutter-часть приложения.
+# Мы слали туда iOS-строку, и получалось заметное несоответствие: логин с одного
+# клиента, а поиск с другого. Версию можно переопределить, когда приложение
+# обновится, — API_CUSTOMER_LOGIN_UA.
+DEFAULT_CUSTOMER_LOGIN_UA = "Dart/3.11 (dart:io)"
+
+
+def customer_login_user_agent() -> str:
+    return env("API_CUSTOMER_LOGIN_UA", DEFAULT_CUSTOMER_LOGIN_UA) or DEFAULT_CUSTOMER_LOGIN_UA
+
+
 def _customer_login_headers(authorization: str) -> dict[str, str]:
-    """POST /customers/auth/login — нужен только живой client Bearer."""
+    """
+    POST /customers/auth/login — нужен только живой client Bearer.
+
+    Набор заголовков повторяет рабочий запрос приложения, включая
+    accept-language: лишние отличия от настоящего клиента ни к чему.
+    """
     return {
         "content-type": "application/json",
-        "user-agent": current_ios_user_agent(),
+        "user-agent": customer_login_user_agent(),
+        "accept-language": env("API_LANGUAGE", "ru") or "ru",
         "authorization": _bearer(authorization),
     }
 
@@ -113,6 +131,7 @@ def _auth_request(
     *,
     headers: dict[str, str],
     body: dict[str, Any] | None = None,
+    rotate_user_agent: bool = True,
 ) -> tuple[int, dict[str, Any] | str]:
     """
     Запрос авторизации. Сетевой сбой → (0, текст), а не исключение.
@@ -123,9 +142,19 @@ def _auth_request(
 
     idempotent=True здесь верно и для POST /auth/login: повторный логин просто
     выдаёт ещё один токен, ничего не создаёт и денег не стоит.
+
+    rotate_user_agent=False нужен входу в личный кабинет: там свой клиент,
+    и общая ротация iOS-строки затёрла бы его.
     """
     try:
-        response = api_call(method, path, headers=headers, body=body, idempotent=True)
+        response = api_call(
+            method,
+            path,
+            headers=headers,
+            body=body,
+            idempotent=True,
+            rotate_user_agent=rotate_user_agent,
+        )
     except RequestFailed as exc:
         return 0, f"сеть: {exc}"
     return response.status, response.body  # type: ignore[return-value]
@@ -265,6 +294,9 @@ def refresh_customer_token(
             "phone": env("API_CUSTOMER_PHONE"),
             "password": env("API_CUSTOMER_PASSWORD"),
         },
+        # Свой user-agent: приложение входит в кабинет Dart-клиентом,
+        # и общая ротация iOS-строки затёрла бы его.
+        rotate_user_agent=False,
     )
     if status != 200:
         raise AuthFatalError(f"customers/auth/login → HTTP {status}: {body}")

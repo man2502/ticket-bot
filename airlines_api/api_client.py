@@ -122,16 +122,24 @@ def api_call(
     headers: dict[str, str],
     body: dict[str, Any] | None = None,
     idempotent: bool | None = None,
+    rotate_user_agent: bool = True,
 ) -> Response:
     """
     Полный ответ (статус, заголовки, тело, латентность). Бросает RequestFailed.
 
-    User-Agent подставляется здесь: он ротируется по времени, и правильнее
-    брать актуальное значение в момент отправки, чем полагаться на то, что
-    вызывающий не забыл обновить свой словарь заголовков.
+    User-Agent по умолчанию подставляется здесь: он ротируется по времени,
+    и правильнее брать актуальное значение в момент отправки, чем полагаться
+    на то, что вызывающий не забыл обновить свой словарь заголовков.
+
+    `rotate_user_agent=False` оставляет заголовок таким, каким его передали.
+    Нужно там, где настоящее приложение шлёт не iOS-строку: вход в личный
+    кабинет оно делает клиентом на Dart, и подмена там заметна.
     """
     request_headers = dict(headers)
-    request_headers["user-agent"] = current_ios_user_agent()
+    if rotate_user_agent:
+        request_headers["user-agent"] = current_ios_user_agent()
+    else:
+        request_headers.setdefault("user-agent", current_ios_user_agent())
     request_headers.setdefault("host", api_host())
 
     return get_client().request(

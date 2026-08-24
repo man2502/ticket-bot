@@ -175,3 +175,107 @@ def test_transit_flight_is_never_selectable(monkeypatch: pytest.MonkeyPatch) -> 
     offers = [transit, _offer(1, number="T5-2")]
     picked, _err = api_booking.pick_flight_offer(offers)
     assert picked.flight_number == "T5-2"
+
+
+# --------------------------------------------------------------------------
+# Заголовки запросов авторизации
+# --------------------------------------------------------------------------
+
+
+class _StubResponse:
+    status, elapsed_ms, text = 200, 5.0, '{"token":"T"}'
+    body = {"token": "T"}
+
+    @property
+    def json(self):
+        return {"token": "T"}
+
+    def safe_text(self, limit=600):
+        return self.text
+
+
+@pytest.fixture()
+def sent(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Перехватить заголовки, которые реально уходят в сеть."""
+    import api_client
+
+    captured: list = []
+
+    class _Client:
+        def request(self, method, path, headers=None, body=None, **kw):
+            captured.append((path, dict(headers or {})))
+            return _StubResponse()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(api_client, "get_client", lambda: _Client())
+
+    monkeypatch.setenv("API_CUSTOMER_PHONE", "+99361234567")
+    monkeypatch.setenv("API_CUSTOMER_PASSWORD", "line003")
+    monkeypatch.setenv("API_AUTHORIZATION", "Bearer clienttoken")
+    monkeypatch.setenv("API_IOS_PASSWORD", "app-secret")
+    monkeypatch.setenv("API_SAVE_TOKENS", "0")
+    return captured
+
+
+def test_customer_login_uses_dart_user_agent(sent: list) -> None:
+    """
+    Приложение входит в личный кабинет Dart-клиентом, а не как iOS.
+
+    Мы слали туда iOS-строку: логин с одного клиента, поиск с другого —
+    заметное несоответствие для того, кто смотрит на трафик.
+    """
+    import api_auth
+
+    api_auth.refresh_customer_token(verbose=False)
+
+    _path, headers = sent[-1]
+    assert headers["user-agent"] == "Dart/3.11 (dart:io)"
+
+
+def test_customer_login_sends_accept_language(sent: list) -> None:
+    """Набор заголовков повторяет рабочий запрос приложения."""
+    import api_auth
+
+    api_auth.refresh_customer_token(verbose=False)
+    assert sent[-1][1]["accept-language"] == "ru"
+
+
+def test_customer_login_user_agent_is_overridable(
+    sent: list, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Приложение обновится — версию Dart можно будет поменять без правки кода."""
+    import api_auth
+
+    monkeypatch.setenv("API_CUSTOMER_LOGIN_UA", "Dart/3.20 (dart:io)")
+    api_auth.refresh_customer_token(verbose=False)
+
+    assert sent[-1][1]["user-agent"] == "Dart/3.20 (dart:io)"
+
+
+def test_ordinary_requests_still_rotate_ios_agent(sent: list) -> None:
+    """
+    Ротация iOS-строки для остальных запросов должна остаться.
+
+    Она меняется раз в 45-55 минут, и подмена её на фиксированную строку
+    сделала бы бота узнаваемым.
+    """
+    import api_client
+
+    api_client.api_call("GET", "customers/info", headers={"authorization": "Bearer x"})
+
+    agent = sent[-1][1]["user-agent"]
+    assert agent.startswith("iOS/")
+    assert "iPhone" in agent
+
+
+def test_explicit_agent_survives_when_rotation_off(sent: list) -> None:
+    import api_client
+
+    api_client.api_call(
+        "POST", "somewhere",
+        headers={"user-agent": "Custom/1.0"},
+        rotate_user_agent=False,
+    )
+    assert sent[-1][1]["user-agent"] == "Custom/1.0"
