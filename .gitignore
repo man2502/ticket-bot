@@ -55,3 +55,10 @@ api_captcha_last.png
 .debug_*.html
 playwright-report/
 mitmweb-flows/
+
+# --- обучение модели капчи из панели ---
+# Кандидат и предыдущая модель — рабочие файлы: по 12 МБ, живут между
+# «обучить» и «применить». В git лежит только текущая captcha_model_api.pt.
+captcha_model_api.candidate.*
+captcha_model_api.prev.*
+*.pt.tmp

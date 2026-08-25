@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import random
 import sys
 from pathlib import Path
@@ -23,6 +24,7 @@ from captcha_cnn_api import (  # noqa: E402
     model_arch,
     model_path,
     preprocess_image,
+    save_metrics,
     save_model,
 )
 from captcha_dataset_api import confirmed_count, hard_count, list_training_samples  # noqa: E402
@@ -156,6 +158,7 @@ def train(
     out_path: Path | None = None,
     patience: int | None = None,
     resume: bool = False,
+    init_from: Path | None = None,
     arch: str = "slice",
     pretrain: bool = True,
 ) -> int:
@@ -238,22 +241,34 @@ def train(
     )
 
     out = out_path or model_path()
+
+    # Откуда брать стартовые веса. По умолчанию — тот же файл, куда пишем:
+    # так `--resume` работал всегда, и для запуска из командной строки это верно.
+    #
+    # Но при `--out` в отдельный файл это ловушка: первый же прогон не найдёт
+    # там ничего и молча начнёт с нуля, выбросив всё, что модель уже умела.
+    # Панель именно так и запускает обучение, поэтому источник задаётся явно.
+    source = init_from or out
+
     use_pretrain = pretrain and not resume
-    if resume and out.exists():
+    if resume and source.exists():
         try:
-            state = torch.load(out, map_location="cpu", weights_only=True)
+            state = torch.load(source, map_location="cpu", weights_only=True)
         except TypeError:
-            state = torch.load(out, map_location="cpu")
+            state = torch.load(source, map_location="cpu")
         ckpt_arch = model_arch(state)
         if arch != ckpt_arch:
             model = _build_for_arch(arch)
             load_matching_state(model, state)
-            print(f"[train-api] миграция {ckpt_arch}→{arch} из {out.name}")
+            print(f"[train-api] миграция {ckpt_arch}→{arch} из {source.name}")
         else:
             model = _build_for_arch(arch)
             load_matching_state(model, state)
-            print(f"[train-api] fine-tune {arch} из {out.name}")
+            print(f"[train-api] fine-tune {arch} из {source.name}")
     else:
+        if resume:
+            # Это не мелочь: человек просил дообучить, а получит другую модель.
+            print(f"[train-api] ВНИМАНИЕ: {source.name} не найден — обучение с нуля")
         model = _build_for_arch(arch)
         if use_pretrain and browser_model_path().exists():
             init_from_browser_model(model)
@@ -282,6 +297,9 @@ def train(
     best_state = None
     stale = 0
     early_stop_after = profile["early_stop_after"]
+    # Инициализация нужна для метрик: при --epochs 0 цикл не выполнится ни разу,
+    # и обращение к epoch после него упало бы на NameError.
+    epoch = 0
 
     for epoch in range(1, effective_epochs + 1):
         model.train()
@@ -346,9 +364,28 @@ def train(
 
     all_full, all_n = _eval_rows(model, all_rows, device=device)
     save_model(model, out)
+
+    # Метрики рядом с моделью. Без них единственный способ узнать, стала модель
+    # лучше или хуже, — глазами в логе обучения, а лог живёт до перезапуска.
+    accuracy = round(100 * all_full / max(all_n, 1), 2)
+    save_metrics(
+        {
+            "trained_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "samples": all_n,
+            "confirmed": confirmed_count(),
+            "hard": hard_count(),
+            "epochs_planned": effective_epochs,
+            "epochs_done": epoch,
+            "arch": arch,
+            "best_val_percent": round(best_score, 2),
+            "accuracy_percent": accuracy,
+            "correct": all_full,
+        },
+        out,
+    )
     print(
         f"[train-api] готово. best={best_score:.1f}% "
-        f"all full={100 * all_full / max(all_n, 1):.1f}% ({all_full}/{all_n})"
+        f"all full={accuracy:.1f}% ({all_full}/{all_n})"
     )
     return 0
 
@@ -374,6 +411,13 @@ def main() -> int:
         help="Взять backbone из airlines_web/captcha_model.pt (6 цифр, тот же стиль)",
     )
     ap.add_argument("--out", type=str, default="")
+    ap.add_argument(
+        "--from",
+        dest="init_from",
+        type=str,
+        default="",
+        help="Откуда взять веса для --resume (по умолчанию — файл из --out)",
+    )
     args = ap.parse_args()
     out = Path(args.out) if args.out else None
     return train(
@@ -383,6 +427,7 @@ def main() -> int:
         min_samples=args.min_samples,
         patience=args.patience if args.patience > 0 else None,
         resume=args.resume,
+        init_from=Path(args.init_from) if args.init_from else None,
         arch=args.arch,
         pretrain=args.pretrain,
         out_path=out,

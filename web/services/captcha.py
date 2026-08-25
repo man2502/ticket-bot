@@ -230,11 +230,3 @@ def _guess_from_name(name: str) -> str:
     """Вариант CNN из имени файла rejected — для журнала разметки."""
     head = name.split("_", 1)[0]
     return head if head.isdigit() else ""
-
-
-def training_hint() -> str:
-    """Подсказка про дообучение — команда, которую надо выполнить руками."""
-    return (
-        "После разметки модель нужно дообучить: "
-        "python airlines_api/train_captcha_cnn_api.py --resume"
-    )

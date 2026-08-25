@@ -74,13 +74,24 @@ def _on_startup() -> None:
         if fixed:
             print(f"[runner] помечено остановленными после перезапуска: {fixed}")
 
+    # То же самое для обучения модели: час работы не переживает перезапуск,
+    # а запись «идёт обучение» осталась бы висеть и не дала бы запустить новое.
+    from web.services.training import recover_orphans as recover_training
+
+    with session_scope() as session:
+        fixed = recover_training(session)
+        if fixed:
+            print(f"[training] помечено остановленными после перезапуска: {fixed}")
+
 
 @app.on_event("shutdown")
 def _on_shutdown() -> None:
-    """Не оставлять ботов работать после закрытия панели."""
+    """Не оставлять ботов и обучение работать после закрытия панели."""
     from web.services.runner import stop_all
+    from web.services.training import stop_all as stop_training_all
 
     stop_all()
+    stop_training_all()
 
 
 @app.exception_handler(LoginRedirect)

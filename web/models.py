@@ -466,3 +466,68 @@ class CaptchaSample(Base):
     labeled_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
     labeled_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TrainingStatus(str, enum.Enum):
+    RUNNING = "running"
+    DONE = "done"  # обучение прошло, модель-кандидат лежит на диске
+    FAILED = "failed"
+    STOPPED = "stopped"  # остановлено человеком
+
+
+class TrainingRun(Base):
+    """
+    Один запуск дообучения модели капчи.
+
+    Обучение идёт около часа на процессоре, поэтому это отдельный процесс
+    с живым логом — как и поиск. Но, в отличие от поиска, оно НЕ занимает
+    очередь сервиса: останавливать поиск на час ради модели бессмысленно,
+    билет важнее. Обучение всегда пишет в свой файл, а живую модель подменяет
+    отдельное действие, и вот оно уже ждёт, пока самолётный поиск закончится.
+    """
+
+    __tablename__ = "training_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default=TrainingStatus.RUNNING.value, index=True
+    )
+    started_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    pid: Mapped[int | None] = mapped_column(nullable=True)
+    exit_code: Mapped[int | None] = mapped_column(nullable=True)
+
+    # Сколько образцов было в датасете на момент запуска. Нужно, чтобы понимать,
+    # стоит ли обучать снова: если с прошлого раза не прибавилось, незачем.
+    samples: Mapped[int] = mapped_column(Integer, default=0)
+    epochs: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Куда обучение сложило результат и что из этого вышло.
+    model_path: Mapped[str] = mapped_column(String(255), default="")
+    accuracy: Mapped[float | None] = mapped_column(nullable=True)
+    # Точность модели, которая была живой на момент запуска, — чтобы панель
+    # могла сказать «стало хуже» и не дать подменить вслепую.
+    baseline_accuracy: Mapped[float | None] = mapped_column(nullable=True)
+
+    applied_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+
+    logs: Mapped[list["TrainingLog"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class TrainingLog(Base):
+    """Строка вывода обучения. Отдельно от job_logs: у обучения нет процесса поиска."""
+
+    __tablename__ = "training_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("training_runs.id", ondelete="CASCADE"), index=True
+    )
+    level: Mapped[str] = mapped_column(String(8), default=LogLevel.INFO.value)
+    text: Mapped[str] = mapped_column(Text)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+    run: Mapped[TrainingRun] = relationship(back_populates="logs")

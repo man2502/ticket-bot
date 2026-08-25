@@ -41,7 +41,6 @@
 
 {% if items %}
 <h2>На разметку — {{ items|length }}</h2>
-<p class="muted small">{{ hint }}</p>
 
 <div class="captcha-grid">
   {% for item in items %}
@@ -75,6 +74,167 @@
   Нечего размечать — модель справляется. Картинки появятся здесь, когда
   сервер отвергнет её вариант.
 </div>
+{% endif %}
+
+
+<h2>Модель</h2>
+
+{% if training.broken %}
+  <div class="alert error">Модель недоступна: {{ training.broken }}</div>
+{% else %}
+
+<div class="cards">
+  <div class="card">
+    <div class="card-value">
+      {% if training.model.accuracy_percent is defined %}{{ '%.0f'|format(training.model.accuracy_percent) }}%{% else %}—{% endif %}
+    </div>
+    <div class="card-label">точность рабочей модели</div>
+  </div>
+  <div class="card">
+    <div class="card-value">{{ training.model.samples or '—' }}</div>
+    <div class="card-label">капч в обучении</div>
+  </div>
+  <div class="card {% if training.samples_new %}card-alert{% endif %}">
+    <div class="card-value">
+      {% if training.samples_new is none %}—{% else %}{{ training.samples_new }}{% endif %}
+    </div>
+    <div class="card-label">
+      {% if training.samples_new is none %}новых — не с чем сравнить{% else %}новых с прошлого раза{% endif %}
+    </div>
+  </div>
+</div>
+
+<p class="muted small">
+  {% if training.model.trained_at %}
+    Обучена {{ training.model.trained_at.replace('T', ' ') }}.
+  {% else %}
+    Когда обучена — неизвестно: модель старше, чем учёт метрик.
+  {% endif %}
+  Обучение идёт около часа на процессоре и <b>не останавливает поиск</b>:
+  результат ложится в отдельный файл, рабочую модель заменяет отдельная кнопка.
+</p>
+
+{# Готовая модель, которую ещё не применили. #}
+{% if training.candidate %}
+<div class="alert {{ 'error' if training.candidate.worse else 'ok' }}">
+  Обучение #{{ training.candidate.run_id }} завершено:
+  точность
+  {% if training.candidate.accuracy is not none %}{{ '%.1f'|format(training.candidate.accuracy) }}%{% else %}неизвестна{% endif %}
+  {% if training.candidate.baseline is not none %}
+    против {{ '%.1f'|format(training.candidate.baseline) }}% у рабочей
+  {% endif %}.
+  {% if training.candidate.worse %}
+    Стало хуже — применять не советую.
+  {% endif %}
+
+  <form method="post" action="/captcha/train/apply" class="inline-form"
+        onsubmit="return confirm('Заменить рабочую модель? Поиск по самолётам должен быть остановлен.')">
+    <input type="hidden" name="run_id" value="{{ training.candidate.run_id }}">
+    <button type="submit">Сделать рабочей</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="model-actions">
+  {% if training.running %}
+    <form method="post" action="/captcha/train/stop" class="inline-form"
+          onsubmit="return confirm('Прервать обучение? Прогресс будет потерян.')">
+      <button type="submit" class="secondary-btn">Остановить обучение</button>
+    </form>
+  {% else %}
+    <form method="post" action="/captcha/train" class="inline-form">
+      <label class="inline-label">
+        эпох
+        <input name="epochs" type="number" min="1" max="1000" value="100" class="narrow">
+      </label>
+      <button type="submit" {% if not training.can_start %}disabled{% endif %}>
+        Дообучить модель
+      </button>
+    </form>
+  {% endif %}
+
+  {% if training.model.has_previous %}
+    <form method="post" action="/captcha/train/rollback" class="inline-form"
+          onsubmit="return confirm('Вернуть предыдущую модель?')">
+      <button type="submit" class="secondary-btn">Откатить на предыдущую</button>
+    </form>
+  {% endif %}
+</div>
+
+{% if training.blocked_reason and not training.running %}
+  <p class="muted small">{{ training.blocked_reason }}</p>
+{% endif %}
+
+{% if training.run %}
+<h3>
+  Обучение #{{ training.run.id }} —
+  {% if training.run.status == 'running' %}
+    идёт, {{ training.duration }}
+    {% if training.progress[0] %}
+      (эпоха {{ training.progress[0] }} из {{ training.progress[1] }})
+    {% endif %}
+  {% elif training.run.status == 'done' %}
+    завершено за {{ training.duration }}
+  {% elif training.run.status == 'stopped' %}
+    остановлено
+  {% else %}
+    ошибка
+  {% endif %}
+</h3>
+
+<div class="console" id="train-console">
+  {% for log in training.logs %}
+    <div class="line line-{{ log.level }}" data-id="{{ log.id }}">
+      <span class="ts">{{ log.ts.strftime('%H:%M:%S') }}</span>{{ log.text }}
+    </div>
+  {% else %}
+    <div class="line line-info"><span class="ts">—</span>Вывода пока нет</div>
+  {% endfor %}
+</div>
+
+{% if training.run.status == 'running' %}
+<script>
+(function () {
+  const box = document.getElementById('train-console');
+  if (!box) return;
+
+  const lines = box.querySelectorAll('.line[data-id]');
+  let lastId = lines.length ? Number(lines[lines.length - 1].dataset.id) : 0;
+  box.scrollTop = box.scrollHeight;
+
+  const source = new EventSource(`/captcha/train/{{ training.run.id }}/stream?after=${lastId}`);
+
+  source.addEventListener('logs', (event) => {
+    for (const row of JSON.parse(event.data)) {
+      const div = document.createElement('div');
+      div.className = 'line line-' + row.level;
+      div.dataset.id = row.id;
+      const ts = document.createElement('span');
+      ts.className = 'ts';
+      ts.textContent = row.ts;
+      div.appendChild(ts);
+      // textContent, а не innerHTML: в лог попадают чужие сообщения об ошибках,
+      // и вставлять их как разметку нельзя.
+      div.appendChild(document.createTextNode(row.text));
+      box.appendChild(div);
+      lastId = row.id;
+    }
+    box.scrollTop = box.scrollHeight;
+  });
+
+  source.addEventListener('done', () => {
+    source.close();
+    // Обучение кончилось — перечитываем страницу: появятся точность и кнопка
+    // «сделать рабочей», а их в поток не передать.
+    setTimeout(() => window.location.reload(), 1000);
+  });
+
+  source.onerror = () => source.close();
+})();
+</script>
+{% endif %}
+{% endif %}
+
 {% endif %}
 
 {% if recent %}

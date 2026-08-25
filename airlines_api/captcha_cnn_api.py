@@ -426,11 +426,63 @@ def try_solve(image_bytes: bytes) -> tuple[str, float] | None:
     return code, conf
 
 
+def metrics_path(path: Path | None = None) -> Path:
+    """Файл с метриками рядом с моделью: когда обучена, на чём и как точна."""
+    p = path or model_path()
+    return p.with_suffix(".json")
+
+
+def read_metrics(path: Path | None = None) -> dict:
+    """
+    Метрики модели или пустой словарь.
+
+    Пустой словарь — нормальный ответ, а не ошибка: у моделей, обученных до
+    появления этого файла, метрик просто нет, и панель должна показать
+    «неизвестно», а не упасть.
+    """
+    import json  # noqa: PLC0415
+
+    try:
+        data = json.loads(metrics_path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_metrics(data: dict, path: Path | None = None) -> Path:
+    import json  # noqa: PLC0415
+
+    target = metrics_path(path)
+    _atomic_write(target, json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
+    return target
+
+
+def _atomic_write(target: Path, payload: bytes) -> None:
+    """
+    Записать файл целиком или не записать вовсе.
+
+    Модель читает бот, и читает он её в момент старта поиска. Запись напрямую
+    в целевой файл оставляет окно, в котором на диске лежит половина модели:
+    поиск, стартовавший ровно тогда, свалится на разборе весов. Временный файл
+    рядом с целевым (тот же том — иначе os.replace не атомарен) закрывает окно.
+    """
+    tmp = target.with_name(target.name + ".tmp")
+    try:
+        tmp.write_bytes(payload)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def save_model(model, path: Path | None = None) -> Path:
     global _model_cache
     torch, _, _ = _lazy_torch()
     p = path or model_path()
-    torch.save(model.state_dict(), p)
+
+    buffer = io.BytesIO()
+    torch.save(model.state_dict(), buffer)
+    _atomic_write(p, buffer.getvalue())
+
     _model_cache = None
     print(f"[cnn-api] модель сохранена: {p}")
     return p

@@ -486,3 +486,12 @@ code {
 .captcha-form input { margin-top: 0; text-align: center; letter-spacing: 3px; }
 .captcha-form button { white-space: nowrap; padding: 8px 12px; }
 .captcha-form:last-child button { width: 100%; }
+
+/* ------------------------------------------------------ обучение модели */
+
+/* Не .row-actions: там выравнивание вправо, оно для ячеек таблицы. */
+.model-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin: 14px 0; }
+.inline-label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.inline-form input.narrow { width: 80px; }
+.alert .inline-form { margin-top: 10px; }
+.alert .inline-label { color: inherit; }
