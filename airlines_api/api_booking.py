@@ -739,6 +739,24 @@ def compute_booking_key(info: AvailabilityInfo, flight: FlightOffer, passengers:
     )
 
 
+def flight_trip_line(flight: FlightOffer) -> str:
+    """
+    Что забронировано, человеческими словами: «рейс 127, вылет 06:30, место 1».
+
+    Уходит в журнал, а оттуда — в письмо от панели. Без этого в уведомлении
+    оставались только маршрут и дата: по ним нельзя понять, утренний это
+    рейс или вечерний, а в день бывает два.
+    """
+    parts = []
+    if flight.flight_number:
+        parts.append(f"рейс {flight.flight_number}")
+    if flight.departure_time:
+        parts.append(f"вылет {flight.departure_time}")
+    if flight.seat:
+        parts.append(f"мест: {flight.seat}")
+    return ", ".join(parts)
+
+
 def booking_notify_body(
     *,
     route_line: str,
@@ -905,6 +923,7 @@ def try_auto_book(
         booking_number=result.pnr,
         form_url=result.checkout_url,
         detail=result.warning,
+        trip=flight_trip_line(flight),
     )
 
     subject = f"T5 API: бронь {result.pnr or 'OK'} — {route_line}"

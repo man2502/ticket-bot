@@ -302,6 +302,42 @@ def booking_notify_body(
     return "\n".join(lines)
 
 
+def trip_line(
+    journey: dict[str, Any],
+    seats: list[SelectedSeat],
+    wagon_type_id: int | None,
+) -> str:
+    """
+    Что забронировано, человеческими словами: поезд, отправление, вагон, места.
+
+    Уходит в журнал, а оттуда — в письмо от панели. Без этого в уведомлении
+    оставались только станции и дата, а какой это поезд и какие места —
+    человек узнавал, только открыв личный кабинет.
+    """
+    parts = []
+
+    train = str(journey.get("train_number") or journey.get("run_number") or "").strip()
+    if train:
+        parts.append(f"поезд {train}")
+
+    departure = str(journey.get("departure_time") or "").strip()
+    if departure:
+        parts.append(f"отправление {departure}")
+
+    if wagon_type_id is not None:
+        parts.append(wagon_type_label(wagon_type_id))
+
+    if seats:
+        wagons = sorted({seat.wagon_number for seat in seats})
+        if wagons:
+            parts.append("вагон " + ", ".join(str(w) for w in wagons))
+        labels = [seat.seat_label for seat in seats if seat.seat_label]
+        if labels:
+            parts.append("места " + ", ".join(labels))
+
+    return ", ".join(parts)
+
+
 def try_auto_book(
     *,
     journey: dict[str, Any],
@@ -392,6 +428,7 @@ def try_auto_book(
         booking_number=result.booking_number,
         form_url=result.form_url,
         detail=result.warning,
+        trip=trip_line(journey, seats, wagon_type_id),
     )
 
     source = str(journey.get("source") or "")

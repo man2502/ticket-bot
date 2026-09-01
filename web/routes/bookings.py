@@ -18,8 +18,7 @@ from web.services.bookings import (
     STATUS_TITLES,
     blocking_attempt,
     journal_path,
-    booking_passengers,
-    booking_route,
+    booking_message_fields,
     notify_orphan_bookings,
     unblock_service,
 )
@@ -32,6 +31,11 @@ SERVICE_TITLES = {
     Service.AIRLINES.value: "Самолёты",
     Service.RAILWAY.value: "Поезда",
 }
+
+# Слово-подтверждение для снятия блокировки. Латиница намеренно: на русской
+# раскладке его не наберёшь случайно, а именно случайного нажатия мы и боимся —
+# за ним стоит риск второй брони и второго счёта.
+UNBLOCK_WORD = "open"
 
 
 def _page(
@@ -80,6 +84,7 @@ def _page(
         blockers=blockers,
         status_titles=STATUS_TITLES,
         service_titles=SERVICE_TITLES,
+        unblock_word=UNBLOCK_WORD,
         message=message,
         is_error=is_error,
         sends={
@@ -115,10 +120,13 @@ def unblock(
 
     # Требуем явного подтверждения: блокировка обычно означает «бронь могла
     # быть создана», и снять её вслепую — риск второго счёта.
-    if confirm.strip().lower() != "снять":
+    if confirm.strip().lower() != UNBLOCK_WORD:
         return _page(
             request, user, db, is_error=True,
-            message='Для снятия блокировки впишите слово «снять» — это защита от случайного нажатия',
+            message=(
+                f"Для снятия блокировки впишите слово «{UNBLOCK_WORD}» — "
+                f"это защита от случайного нажатия"
+            ),
         )
 
     result = unblock_service(db, service, guard_key=guard_key.strip())
@@ -153,12 +161,7 @@ def resend(
     to_email = job.notify_email if job else ""
     to_phone = job.notify_phone if job else ""
 
-    subject, body, sms = format_booking_message(
-        route=booking_route(booking),
-        payment_url=booking.payment_url,
-        booking_number=booking.booking_number,
-        passengers=booking_passengers(booking),
-    )
+    subject, body, sms = format_booking_message(**booking_message_fields(booking))
     results = notify_booking(
         db, subject=subject, body=body, sms_text=sms,
         email=to_email, phone=to_phone, booking_id=booking.id,

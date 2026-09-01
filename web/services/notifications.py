@@ -305,18 +305,64 @@ def format_booking_message(
     payment_url: str,
     booking_number: str = "",
     passengers: str = "",
+    service: str = "",
+    trip: str = "",
+    depart_date: str = "",
 ) -> tuple[str, str, str]:
-    """Тема, тело письма и короткий текст для SMS — в одном месте, чтобы не разошлись."""
-    subject = f"Билет забронирован: {route}"
-    if booking_number:
-        subject = f"Бронь {booking_number}: {route}"
+    """
+    Тема, тело письма и короткий текст для SMS — в одном месте, чтобы не разошлись.
 
-    lines = [route]
+    Письмо отвечает на вопрос «что я оплачиваю»: перевозчик, маршрут, дата,
+    рейс со временем, места, пассажиры. Раньше в нём были только маршрут
+    и ссылка — по ним нельзя было понять даже, утренний это рейс или вечерний,
+    а в день их бывает два.
+
+    Номер документа в письмо не кладём намеренно: почтовый ящик — не то место,
+    где должны лежать паспортные данные. Для оплаты он и не нужен.
+    """
+    # Маршрут может быть неизвестен: процесс удалили или бота запускали
+    # из командной строки. Тогда в теме — перевозчик, он всяко известен.
+    headline = route or service or "поездка"
+    subject = f"Билет забронирован: {headline}"
+    if booking_number:
+        subject = f"Бронь {booking_number}: {headline}"
+
+    fields: list[tuple[str, str]] = []
+    if service:
+        fields.append(("Перевозчик", service))
+    if route:
+        fields.append(("Маршрут", route))
+    if depart_date:
+        fields.append(("Дата", depart_date))
+    if trip:
+        fields.append(("Рейс", trip))
     if passengers:
-        lines.append(f"Пассажиры: {passengers}")
+        fields.append(("Пассажиры", passengers))
     if booking_number:
-        lines.append(f"Номер брони: {booking_number}")
-    lines += ["", "Ссылка для оплаты:", payment_url, "", "Оплатите в течение времени, отведённого перевозчиком."]
+        fields.append(("Номер брони", booking_number))
 
-    sms = f"Бронь {booking_number or ''} {route}. Оплата: {payment_url}".strip()
+    width = max(len(label) for label, _ in fields)
+    lines = [f"{label + ':':<{width + 1}} {value}" for label, value in fields]
+    lines += [
+        "",
+        "Ссылка для оплаты:",
+        payment_url,
+        "",
+        "Оплатите в течение времени, отведённого перевозчиком —",
+        "иначе бронь снимается и место уходит.",
+    ]
+
+    # В SMS влезает мало, поэтому только то, без чего нельзя: что за поездка
+    # и куда платить. Ссылка всегда последней — её не должно обрезать.
+    sms_parts = [f"Бронь {booking_number}" if booking_number else "Бронь"]
+    if route:
+        sms_parts.append(route)
+    elif service:
+        sms_parts.append(service)
+    if depart_date:
+        sms_parts.append(depart_date)
+    sms_head = " ".join(sms_parts)
+    if trip:
+        sms_head += f", {trip}"
+    sms = f"{sms_head}. Оплата: {payment_url}"
     return subject, "\n".join(lines), sms

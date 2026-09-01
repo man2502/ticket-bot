@@ -80,6 +80,39 @@ def _job(db, *, service: str = "railway", started: dt.datetime | None = None):
     return job
 
 
+def _fake_request():
+    """
+    Минимальный Request для прямого вызова роутов.
+
+    Поднимать HTTP-клиент ради проверки одного условия незачем: странице нужен
+    только путь, а Starlette собирает Request из обычного scope-словаря.
+    """
+    from starlette.requests import Request
+
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/bookings/unblock",
+            "headers": [],
+            "query_string": b"",
+        }
+    )
+
+
+def _admin(db):
+    """Администратор — роуты снятия блокировки требуют именно его."""
+    from web.models import Role, User
+    from web.security import hash_password
+
+    user = db.query(User).filter(User.role == Role.ADMIN.value).first()
+    if user is None:
+        user = User(login="root", password_hash=hash_password("x" * 8), role=Role.ADMIN.value)
+        db.add(user)
+        db.commit()
+    return user
+
+
 def _write_journal(service: str, records: list[dict]) -> None:
     """Записать журнал так, как это делает сам бот."""
     from core.booking_guard import BookingGuard
@@ -683,3 +716,177 @@ def test_rebooked_pair_notifies_only_about_the_new_one(db, monkeypatch: pytest.M
 
     assert len(subjects) == 1
     assert "46MEMB" in subjects[0]
+
+
+# --------------------------------------------------------------------------
+# Подробности поездки в уведомлении
+# --------------------------------------------------------------------------
+
+
+def test_trip_travels_from_journal_to_booking(db) -> None:
+    """
+    Подробности рейса знает только бот — панель берёт их из журнала.
+
+    Без них в письме оставались маршрут и дата: по ним нельзя понять даже,
+    утренний это рейс или вечерний, а в день их бывает два.
+    """
+    from core.booking_guard import BookingGuard
+    from web.services.bookings import journal_path, sync_from_journal
+
+    job = _job(db, service="airlines")
+    guard = BookingGuard(journal_path("airlines"))
+    guard.begin("k1")
+    guard.settle(
+        "k1",
+        ok=True,
+        booking_number="46MEMB",
+        form_url="https://bank.tm/1",
+        trip="рейс 127, вылет 06:30, мест: 1",
+    )
+
+    created = sync_from_journal(db, job)
+    assert created[0].trip == "рейс 127, вылет 06:30, мест: 1"
+
+
+def test_old_journal_without_trip_still_reads(db) -> None:
+    """Журналы, записанные до появления поля, должны читаться как прежде."""
+    import json
+
+    from web.services.bookings import journal_path, sync_from_journal
+
+    # Процесс заведомо раньше записи: иначе она отсеется как «из прошлого запуска».
+    job = _job(db, service="airlines", started=dt.datetime(2026, 1, 1))
+    path = journal_path("airlines")
+    path.write_text(
+        json.dumps(
+            {
+                "attempts": {
+                    "k1": {
+                        "booking_key": "k1",
+                        "idempotency_key": "i1",
+                        "status": "done",
+                        "started_at": "2026-09-01 13:00:00",
+                        "booking_number": "46MEMB",
+                        "form_url": "https://bank.tm/1",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    created = sync_from_journal(db, job)
+    assert created[0].booking_number == "46MEMB"
+    assert created[0].trip == ""
+
+
+def test_message_has_everything_needed_to_pay(db) -> None:
+    from web.services.bookings import booking_message_fields, sync_from_journal
+    from web.services.notifications import format_booking_message
+
+    job = _job(db, service="airlines")
+    _write_journal("airlines", [{"key": "k1", "number": "46MEMB", "url": "https://bank.tm/pay"}])
+    booking = sync_from_journal(db, job)[0]
+    booking.trip = "рейс 127, вылет 06:30, мест: 1"
+
+    subject, body, sms = format_booking_message(**booking_message_fields(booking))
+
+    assert "46MEMB" in subject
+    for expected in (
+        "Turkmenistan Airlines",   # перевозчик
+        f"{job.source} → {job.destination}",  # маршрут
+        job.depart_date,           # дата
+        "рейс 127",                # рейс
+        "вылет 06:30",             # время
+        "TEST",                    # фамилия пассажира
+        "46MEMB",                  # номер брони
+        "https://bank.tm/pay",     # ссылка
+    ):
+        assert expected in body, f"в письме нет: {expected}"
+
+
+def test_document_number_stays_out_of_the_message(db) -> None:
+    """
+    Паспорт в письме не нужен: для оплаты он не требуется, а почтовый ящик —
+    не то место, где должны лежать документы.
+    """
+    from web.models import Passenger
+    from web.services.bookings import booking_message_fields, sync_from_journal
+    from web.services.notifications import format_booking_message
+
+    job = _job(db, service="airlines")
+    doc = db.query(Passenger).first().doc_number
+    _write_journal("airlines", [{"key": "k1", "number": "A1", "url": "https://bank.tm/1"}])
+    booking = sync_from_journal(db, job)[0]
+
+    _subject, body, sms = format_booking_message(**booking_message_fields(booking))
+    assert doc not in body
+    assert doc not in sms
+
+
+def test_sms_keeps_the_link_last(db) -> None:
+    """Обрежется — так хвост, а не ссылка: без неё сообщение бесполезно."""
+    from web.services.notifications import format_booking_message
+
+    _subject, _body, sms = format_booking_message(
+        route="ASB → MYP",
+        depart_date="18.09.2026",
+        service="Turkmenistan Airlines",
+        trip="рейс 127, вылет 06:30",
+        payment_url="https://bank.tm/pay",
+        booking_number="46MEMB",
+        passengers="TEST ANVAR",
+    )
+    assert sms.endswith("https://bank.tm/pay")
+    assert "46MEMB" in sms and "рейс 127" in sms
+
+
+def test_message_without_job_keeps_carrier_in_subject() -> None:
+    """
+    Процесс могли удалить. Извиняться в теме письма незачем — перевозчик,
+    рейс и номер брони на месте, этого хватает, чтобы понять, за что платишь.
+    """
+    from web.services.notifications import format_booking_message
+
+    subject, body, _sms = format_booking_message(
+        route="",
+        service="Turkmenistan Airlines",
+        trip="рейс 127, вылет 06:30",
+        payment_url="https://bank.tm/pay",
+        booking_number="46MEMB",
+    )
+    assert subject == "Бронь 46MEMB: Turkmenistan Airlines"
+    assert "Маршрут" not in body
+    assert "рейс 127" in body
+
+
+# --------------------------------------------------------------------------
+# Слово-подтверждение снятия блокировки
+# --------------------------------------------------------------------------
+
+
+def test_unblock_word_is_latin() -> None:
+    """
+    Латиница намеренно: на русской раскладке случайно не наберёшь, а именно
+    случайного нажатия мы и боимся — за ним второй счёт.
+    """
+    from web.routes.bookings import UNBLOCK_WORD
+
+    assert UNBLOCK_WORD == "open"
+    assert UNBLOCK_WORD.isascii()
+
+
+def test_wrong_word_does_not_unblock(db) -> None:
+    from web.routes.bookings import UNBLOCK_WORD, unblock
+    from web.services.bookings import blocking_attempt
+
+    _write_journal("railway", [{"key": "k1", "number": "RW-1", "url": "https://bank.tm/1"}])
+    admin = _admin(db)
+
+    unblock(request=_fake_request(), service="railway", guard_key="", confirm="снять",
+            user=admin, db=db)
+    assert blocking_attempt("railway") is not None, "чужое слово не должно снимать блокировку"
+
+    unblock(request=_fake_request(), service="railway", guard_key="", confirm=UNBLOCK_WORD.upper(),
+            user=admin, db=db)
+    assert blocking_attempt("railway") is None, "регистр не должен мешать"

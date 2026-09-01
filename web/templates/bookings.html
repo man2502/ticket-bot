@@ -49,8 +49,8 @@
   <form method="post" action="/bookings/unblock" class="test-row">
     <input type="hidden" name="service" value="{{ blocker.service }}">
     <label>
-      Впишите «снять», чтобы подтвердить
-      <input name="confirm" placeholder="снять" autocomplete="off">
+      Впишите «{{ unblock_word }}», чтобы подтвердить
+      <input name="confirm" placeholder="{{ unblock_word }}" autocomplete="off">
     </label>
     <button type="submit" class="danger">Снять блокировку</button>
   </form>
@@ -65,7 +65,7 @@
 <table class="grid">
   <thead>
     <tr>
-      <th>Когда</th><th>Процесс</th><th>Сервис</th><th>Состояние</th>
+      <th>Когда</th><th>Процесс</th><th>Сервис</th><th>Рейс</th><th>Состояние</th>
       <th>Номер</th><th>Оплата</th><th>Уведомление</th><th></th>
     </tr>
   </thead>
@@ -83,6 +83,9 @@
         {% endif %}
       </td>
       <td class="small">{{ service_titles.get(b.service, b.service) }}</td>
+      {# Рейс и время: по маршруту и дате не понять, утренний это рейс
+         или вечерний, а в день их бывает два. #}
+      <td class="small">{{ b.trip or '—' }}</td>
       <td>
         <span class="tag {{ 'tag-ok' if b.status == 'done' else ('tag-error' if b.status in ('unknown', 'pending') else '') }}">
           {{ status_titles.get(b.status, b.status) }}

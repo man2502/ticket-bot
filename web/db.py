@@ -144,6 +144,16 @@ def _migrate() -> None:
             if dead in columns:
                 conn.execute(text(f"ALTER TABLE service_configs DROP COLUMN {dead}"))
 
+        # Описание рейса в броне: раньше в уведомлении были только маршрут
+        # и дата, а какой это рейс и во сколько — человек не видел.
+        booking_columns = {
+            row[1] for row in conn.execute(text("PRAGMA table_info(bookings)"))
+        }
+        if booking_columns and "trip" not in booking_columns:
+            conn.execute(
+                text("ALTER TABLE bookings ADD COLUMN trip VARCHAR(255) NOT NULL DEFAULT ''")
+            )
+
     # Отдельным соединением: внутри транзакции PRAGMA foreign_keys не действует.
     _allow_bookings_without_job()
 
@@ -190,6 +200,7 @@ def _allow_bookings_without_job() -> None:
                     guard_key VARCHAR(64) NOT NULL,
                     booking_number VARCHAR(64) NOT NULL,
                     payment_url TEXT NOT NULL,
+                    trip VARCHAR(255) NOT NULL DEFAULT '',
                     detail TEXT NOT NULL,
                     created_at DATETIME NOT NULL
                 )
@@ -197,9 +208,9 @@ def _allow_bookings_without_job() -> None:
             )
             cursor.execute(
                 "INSERT INTO bookings_new (id, job_id, service, status, guard_key, "
-                "booking_number, payment_url, detail, created_at) "
+                "booking_number, payment_url, trip, detail, created_at) "
                 "SELECT id, job_id, service, status, guard_key, booking_number, "
-                "payment_url, detail, created_at FROM bookings"
+                "payment_url, trip, detail, created_at FROM bookings"
             )
             cursor.execute("DROP TABLE bookings")
             cursor.execute("ALTER TABLE bookings_new RENAME TO bookings")

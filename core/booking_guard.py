@@ -56,6 +56,11 @@ class AttemptRecord:
     detail: str = ""
     booking_number: str = ""
     form_url: str = ""
+    # Что именно забронировано: рейс и время, поезд и вагон. Заполняет бот —
+    # только он знает подробности, а панель по журналу шлёт уведомление
+    # и показывает бронь. Старые журналы без этого поля читаются как прежде:
+    # `get()` подставляет пустую строку.
+    trip: str = ""
 
 
 def booking_key(*parts: Any) -> str:
@@ -185,6 +190,7 @@ class BookingGuard:
         detail: str = "",
         booking_number: str = "",
         form_url: str = "",
+        trip: str = "",
     ) -> None:
         """Закрыть попытку достоверным результатом: создана или точно отказано."""
         self._update(
@@ -193,6 +199,7 @@ class BookingGuard:
             detail=detail,
             booking_number=booking_number,
             form_url=form_url,
+            trip=trip,
         )
 
     def mark_unknown(self, key: str, detail: str) -> None:

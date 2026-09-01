@@ -35,8 +35,10 @@ from web.services.bot_env import SERVICE_JOURNALS, SERVICE_DIRS  # noqa: E402
 
 __all__ = [
     "SERVICE_ROUTE_UNKNOWN",
+    "SERVICE_NAMES",
     "booking_route",
     "booking_passengers",
+    "booking_message_fields",
     "sync_orphan_bookings",
     "notify_orphan_bookings",
     "journal_path",
@@ -190,6 +192,7 @@ def _import_records(db, records, *, service: str, job_id: int | None) -> list[Bo
             stale.status = record.status
             stale.booking_number = record.booking_number
             stale.payment_url = record.form_url
+            stale.trip = record.trip
             stale.detail = record.detail
             if job_id is not None and stale.job_id is None:
                 stale.job_id = job_id
@@ -205,6 +208,7 @@ def _import_records(db, records, *, service: str, job_id: int | None) -> list[Bo
             guard_key=record.booking_key,
             booking_number=record.booking_number,
             payment_url=record.form_url,
+            trip=record.trip,
             detail=record.detail,
         )
         db.add(booking)
@@ -229,10 +233,7 @@ def notify_orphan_bookings(db) -> list[Booking]:
 
     for booking in payable:
         subject, body, sms = format_booking_message(
-            route=booking_route(booking),
-            payment_url=booking.payment_url,
-            booking_number=booking.booking_number,
-            passengers=booking_passengers(booking),
+            **booking_message_fields(booking),
         )
         try:
             notify_booking(
@@ -255,12 +256,40 @@ SERVICE_ROUTE_UNKNOWN = {
 }
 
 
+SERVICE_NAMES = {
+    Service.AIRLINES.value: "Turkmenistan Airlines",
+    Service.RAILWAY.value: "Türkmendemirýollary",
+}
+
+
 def booking_route(booking: Booking) -> str:
-    """Маршрут для письма: из процесса, а если его нет — честная заглушка."""
-    if booking.job is not None:
-        job = booking.job
-        return f"{job.source} → {job.destination}, {job.depart_date}"
-    return SERVICE_ROUTE_UNKNOWN.get(booking.service, booking.service)
+    """
+    Маршрут для письма: из процесса, а если его нет — пустая строка.
+
+    Пустая, а не «маршрут неизвестен»: процесс могли удалить или запустить
+    бота из командной строки, и писать в теме письма извинение вместо данных
+    незачем — перевозчик, рейс и номер брони на месте, этого достаточно.
+
+    Дату сюда не добавляем: у неё отдельная строка, и дублировать её
+    в заголовке значит сделать тему длиннее без пользы.
+    """
+    if booking.job is None:
+        return ""
+    return f"{booking.job.source} → {booking.job.destination}"
+
+
+def booking_message_fields(booking: Booking) -> dict[str, str]:
+    """Всё, что панель знает о броне, — одним словарём для `format_booking_message`."""
+    job = booking.job
+    return {
+        "route": booking_route(booking),
+        "payment_url": booking.payment_url,
+        "booking_number": booking.booking_number,
+        "passengers": booking_passengers(booking),
+        "service": SERVICE_NAMES.get(booking.service, booking.service),
+        "trip": booking.trip,
+        "depart_date": job.depart_date if job is not None else "",
+    }
 
 
 def booking_passengers(booking: Booking) -> str:

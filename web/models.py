@@ -414,6 +414,9 @@ class Booking(Base):
     guard_key: Mapped[str] = mapped_column(String(64), default="")
     booking_number: Mapped[str] = mapped_column(String(64), default="")
     payment_url: Mapped[str] = mapped_column(Text, default="")
+    # Что именно забронировано: рейс и время, поезд, вагон, места. Приходит
+    # из журнала бота — только он знает подробности рейса.
+    trip: Mapped[str] = mapped_column(String(255), default="")
     detail: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
 
