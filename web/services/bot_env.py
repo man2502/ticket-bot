@@ -31,6 +31,7 @@ __all__ = [
     "prepare_launch",
     "cleanup_run_dir",
     "local_env_warning",
+    "booking_contacts",
     "SERVICE_DIRS",
     "SERVICE_SCRIPTS",
 ]
@@ -90,6 +91,26 @@ def local_env_warning(service: str) -> str:
     )
 
 
+def booking_contacts(db, job: Job) -> tuple[str, str]:
+    """
+    Куда сервис перевозчика пришлёт подтверждение брони: (email, телефон).
+
+    Порядок: настройки процесса → значения по умолчанию из настроек панели.
+    Пассажирский email бот подставит сам, если тут пусто, — но полагаться на
+    это нельзя: у пассажира почты может не быть вовсе, и тогда сервер T5
+    отвечает `Error Create (HTTP 404)`, отвергая бронь на валидации.
+
+    Это НЕ то же самое, что адрес рассылки панели: там мы шлём ссылку на оплату
+    себе, а здесь — говорим перевозчику, на чьё имя оформляется бронь.
+    Совпадают они по умолчанию, но развести их должно быть можно.
+    """
+    from web.services.settings import get_setting  # noqa: PLC0415
+
+    email = (job.notify_email or "").strip() or get_setting(db, "default_notify_email")
+    phone = (job.notify_phone or "").strip() or get_setting(db, "default_notify_phone")
+    return email.strip(), phone.strip()
+
+
 def _format_env(values: dict[str, Any]) -> str:
     """
     Собрать содержимое `.env`.
@@ -143,6 +164,7 @@ def _railway_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> dic
 def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> dict[str, Any]:
     config = get_service_config(db, Service.AIRLINES.value)
     params = job.params
+    contact_email, contact_phone = booking_contacts(db, job)
 
     values: dict[str, Any] = {
         # См. комментарий в _railway_env: письма и SMS отправляет панель.
@@ -172,6 +194,12 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
         "CAPTCHA_API_COLLECT": "1",
         "CAPTCHA_API_COLLECT_REJECTED": "1",
         "FLIGHT_STRICT": "1" if params.get("strict") else "0",
+        # Контакты для брони. Без email сервер T5 отвергает CreateBooking
+        # с `Error Create (HTTP 404)`: на этот адрес он шлёт подтверждение
+        # и ссылку на оплату. Раньше панель их не передавала вовсе, и бот
+        # оставался с пустым полем, если у пассажира не было почты.
+        "API_CONTACT_EMAIL": contact_email,
+        "API_CONTACT_PHONE": contact_phone,
     }
 
     if params.get("flight_time"):

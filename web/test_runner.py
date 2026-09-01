@@ -58,6 +58,12 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     db_module.init_db()
     with db_module.session_scope() as session:
+        # Адрес для брони: без него панель не даёт запустить поиск по самолётам,
+        # потому что сервер перевозчика отвергает CreateBooking без contactEmail.
+        # У рабочей панели он заполнен, тесты стартуют из того же состояния.
+        from web.services.settings import save_settings
+
+        save_settings(session, {"default_notify_email": "pay@example.com"})
         yield session
 
 
@@ -675,3 +681,98 @@ def test_delete_removes_run_directory(db) -> None:
     assert launch.env_file.exists()
     delete_job(db, job)
     assert not launch.run_dir.exists()
+
+
+# --------------------------------------------------------------------------
+# Контакты для брони
+# --------------------------------------------------------------------------
+
+
+def test_contact_reaches_the_bot(db) -> None:
+    """
+    Без contactEmail сервер перевозчика отвергает бронь. Панель обязана
+    передать адрес: у пассажира почты может не быть вовсе.
+    """
+    from web.services.bot_env import prepare_launch
+    from web.services.settings import save_settings
+
+    save_settings(db, {"default_notify_email": "pay@example.com",
+                       "default_notify_phone": "+99312345678"})
+    job = _make_job(db, "airlines")
+    values = _env_values(prepare_launch(db, job).env_file)
+
+    assert values["API_CONTACT_EMAIL"] == "pay@example.com"
+    assert values["API_CONTACT_PHONE"] == "+99312345678"
+
+
+def test_job_contact_wins_over_default(db) -> None:
+    from web.services.bot_env import prepare_launch
+    from web.services.settings import save_settings
+
+    save_settings(db, {"default_notify_email": "default@example.com"})
+    job = _make_job(db, "airlines")
+    job.notify_email = "this-one@example.com"
+    db.commit()
+
+    values = _env_values(prepare_launch(db, job).env_file)
+    assert values["API_CONTACT_EMAIL"] == "this-one@example.com"
+
+
+def test_airlines_without_contact_email_is_refused(db) -> None:
+    """
+    Узнать о нехватке адреса в момент появления мест — значит потерять
+    именно тот слот, ради которого всё и затевалось. Проверяем на старте.
+    """
+    from web.services.runner import JobStartError, start_job
+    from web.services.settings import save_service_config, save_settings
+
+    # Доступы на месте: иначе запуск споткнётся о них раньше, и тест
+    # проверял бы не то, что задуман.
+    save_service_config(
+        db,
+        "airlines",
+        {"login": "+99361234567", "password_enc": "пароль",
+         "extra_login": "ios", "extra_password_enc": "пароль"},
+    )
+    save_settings(db, {"default_notify_email": "", "default_notify_phone": ""})
+    job = _make_job(db, "airlines")
+
+    with pytest.raises(JobStartError) as exc:
+        start_job(db, job)
+    assert "email" in str(exc.value).lower()
+
+
+def test_passenger_email_is_enough(db) -> None:
+    """Почта пассажира — законный запасной вариант: бот подставит её сам."""
+    from web.models import Passenger
+    from web.services.runner import _missing_booking_contact
+    from web.services.settings import save_settings
+
+    save_settings(db, {"default_notify_email": ""})
+    job = _make_job(db, "airlines")
+    pax = db.query(Passenger).first()
+    pax.email = "pax@example.com"
+    db.commit()
+
+    assert _missing_booking_contact(db, job) == ""
+
+
+def test_contact_is_not_required_without_auto_book(db) -> None:
+    """При выключенной автоброни бот только смотрит — контакты не нужны."""
+    from web.services.runner import _missing_booking_contact
+    from web.services.settings import save_service_config, save_settings
+
+    save_settings(db, {"default_notify_email": ""})
+    save_service_config(db, "airlines", {"auto_book": False})
+    job = _make_job(db, "airlines")
+
+    assert _missing_booking_contact(db, job) == ""
+
+
+def test_railway_needs_no_contact(db) -> None:
+    """У поездов свой поток брони — эта проверка не про них."""
+    from web.services.runner import _missing_booking_contact
+    from web.services.settings import save_settings
+
+    save_settings(db, {"default_notify_email": ""})
+    assert _missing_booking_contact(db, _make_job(db, "railway")) == ""

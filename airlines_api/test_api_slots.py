@@ -432,3 +432,128 @@ def test_two_minute_period_waits_out_the_idle_minute(
     # Из рабочей минуты до следующей отметки ~90 с, из нерабочей ~30 с.
     assert all(90.0 <= w <= 91.0 for w in waits[0::2]), waits
     assert all(30.0 <= w <= 31.0 for w in waits[1::2]), waits
+
+
+# --------------------------------------------------------------------------
+# Обязательные поля брони
+# --------------------------------------------------------------------------
+
+
+def _payload(**over):
+    """Полный корректный payload; в тестах портим по одному полю."""
+    flight = api_booking.FlightOffer(
+        raw={}, summary="", search_id=1, booking_class_id=1,
+        departure_time="06:30", flight_number="127", seat=1,
+    )
+    info = api_booking.AvailabilityInfo(
+        search_key="OW_test", flights=[flight], picked=flight
+    )
+    passengers = [
+        {
+            "id": "4",
+            "type": "adult",
+            "first_name": "AYNA",
+            "last_name": "TEST",
+            "dob": "05.12.1994",
+            "gender": "F",
+            "doc_number": "I-LB 897989",
+            "doc_expdt": "01.01.2040",
+            "citizenship": "TM",
+            "email": "pax@example.com",
+            "phone": "+99312345678",
+        }
+    ]
+    payload = api_booking.build_create_booking_payload(
+        info, flight, passengers=passengers
+    )
+    payload.update(over)
+    return payload
+
+
+def test_full_payload_has_nothing_missing() -> None:
+    assert api_booking.missing_booking_fields(_payload()) == []
+
+
+def test_empty_contact_email_is_caught() -> None:
+    """
+    Ровно этот случай и был: сервер T5 ответил `Error Create (HTTP 404)`,
+    отвергнув бронь на валидации, а в логе осталось невнятное «404».
+    """
+    missing = api_booking.missing_booking_fields(_payload(contactEmail=""))
+    assert len(missing) == 1
+    assert "email" in missing[0]
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["searchKey", "contactName", "contactSurname", "contactEmail", "subscriberNumber"],
+)
+def test_every_required_field_is_checked(field: str) -> None:
+    assert api_booking.missing_booking_fields(_payload(**{field: ""}))
+
+
+@pytest.mark.parametrize(
+    "field", ["adultname1", "adultsurname1", "adultdob1", "adultdocser1", "adultexpdt1"]
+)
+def test_passenger_fields_are_checked(field: str) -> None:
+    missing = api_booking.missing_booking_fields(_payload(**{field: ""}))
+    assert any(field in text for text in missing), missing
+
+
+def test_whitespace_counts_as_empty() -> None:
+    """Пробел в поле сервер отвергнет так же, как пустоту."""
+    assert api_booking.missing_booking_fields(_payload(contactEmail="   "))
+
+
+def test_unrelated_empty_field_is_not_reported() -> None:
+    """Проверяем только обязательное: лишние придирки — это ложная тревога."""
+    payload = _payload()
+    payload["somethingElse"] = ""
+    assert api_booking.missing_booking_fields(payload) == []
+
+
+def test_booking_is_refused_before_the_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Запрос с пустым полем не должен уходить вовсе.
+
+    Он стоит целого слота — того самого, ради которого бот и ждал места.
+    И это достоверный отказ, а не «неизвестно»: раз не отправляли, брони нет
+    и поиск может продолжаться.
+    """
+    sent = []
+    monkeypatch.setattr(
+        api_booking,
+        "create_booking",
+        lambda *a, **k: sent.append(1) or (200, {}),
+    )
+    # Payload собираем ДО подмены: иначе заглушка позвала бы саму себя.
+    broken = _payload(contactEmail="")
+    monkeypatch.setattr(
+        api_booking, "build_create_booking_payload", lambda *a, **k: broken
+    )
+    monkeypatch.setattr(
+        api_booking,
+        "get_passengers",
+        lambda **k: [{"type": "adult", "id": "4", "first_name": "A", "last_name": "B",
+                      "dob": "05.12.1994", "gender": "F", "doc_number": "AA1",
+                      "doc_expdt": "01.01.2040", "citizenship": "TM"}],
+    )
+
+    flight = api_booking.FlightOffer(
+        raw={}, summary="ok", search_id=1, booking_class_id=1,
+        departure_time="06:30", flight_number="127", seat=1,
+    )
+    monkeypatch.setattr(
+        api_booking,
+        "parse_availability",
+        lambda body: api_booking.AvailabilityInfo(
+            search_key="OW_test", flights=[flight], picked=flight
+        ),
+    )
+
+    result = api_booking.try_auto_book({}, headers={}, route_line="ASB → MYP", verbose=False)
+
+    assert sent == [], "запрос ушёл, хотя поле пустое"
+    assert result.ok is False
+    assert result.unknown is False, "брони нет — это достоверный отказ"
+    assert "email" in result.error

@@ -63,6 +63,10 @@ PAX = [
         "gender": "M",
         "doc_number": "AA1234567",
         "citizenship": "TM",
+        # Почта и телефон обязательны: без contactEmail сервер T5 отвергает
+        # CreateBooking, и бот теперь не отправляет такой запрос вовсе.
+        "email": "pax@example.com",
+        "phone": "+99361234567",
     }
 ]
 

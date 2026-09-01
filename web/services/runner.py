@@ -37,7 +37,7 @@ import threading
 
 from web.config import REPO_ROOT
 from web.db import session_scope
-from web.models import Job, JobLog, JobStatus, LogLevel
+from web.models import Job, JobLog, JobStatus, LogLevel, Service
 from web.services.bot_env import cleanup_run_dir, local_env_warning, prepare_launch
 
 __all__ = [
@@ -140,6 +140,41 @@ def _popen_kwargs() -> dict:
     return {"start_new_session": True}
 
 
+def _missing_booking_contact(db, job: Job) -> str:
+    """
+    Проверить контакты для брони заранее. Пустая строка — всё в порядке.
+
+    Сервер T5 отвергает CreateBooking без contactEmail с невнятным
+    `Error Create (HTTP 404)`, и узнать об этом в момент появления мест —
+    значит потерять именно тот слот, ради которого всё и затевалось.
+
+    При выключенной автоброни контакты не нужны: бот только смотрит и
+    сообщает, а бронирует человек руками.
+    """
+    if job.service != Service.AIRLINES.value:
+        return ""
+
+    from web.services.bot_env import booking_contacts
+    from web.services.settings import get_service_config
+
+    if not get_service_config(db, job.service).auto_book:
+        return ""
+
+    email, _phone = booking_contacts(db, job)
+    if email:
+        return ""
+
+    # Почта пассажира — законный запасной вариант: бот подставит её сам.
+    if any((link.passenger.email or "").strip() for link in job.passengers):
+        return ""
+
+    return (
+        "Не задан email для брони. Сервер перевозчика без него отказывает. "
+        "Заполните «Куда слать ссылку на оплату» в настройках панели, "
+        "адрес в самом процессе или email пассажира."
+    )
+
+
 def start_job(db, job: Job) -> None:
     """
     Запустить процесс поиска. Бросает `JobStartError`, если запускать нельзя.
@@ -163,6 +198,10 @@ def start_job(db, job: Job) -> None:
     missing = missing_credentials(db, job.service)
     if missing:
         raise JobStartError(f"Не заполнены доступы сервиса: {', '.join(missing)}")
+
+    contact_problem = _missing_booking_contact(db, job)
+    if contact_problem:
+        raise JobStartError(contact_problem)
 
     # Незакрытая попытка брони в журнале — бот при запуске остановится сам.
     # Говорим об этом заранее, иначе процесс просто завершится через секунду,

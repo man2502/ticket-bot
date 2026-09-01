@@ -565,6 +565,56 @@ def build_create_booking_payload(
     return payload
 
 
+# Поля, без которых сервер T5 отказывает. Список выведен из рабочего запроса:
+# именно эти значения в нём непустые, и именно на пустой contactEmail сервер
+# ответил `Error Create (HTTP 404)` — то есть отверг на валидации, ничего
+# не создав. Проверка нужна до отправки: обречённый запрос стоит целого слота,
+# а человек в логе видит невнятное «404» вместо причины.
+REQUIRED_BOOKING_FIELDS = {
+    "searchKey": "ключ поиска (searchKey)",
+    "contactName": "имя контактного лица",
+    "contactSurname": "фамилия контактного лица",
+    "contactEmail": "email для брони (API_CONTACT_EMAIL или email пассажира)",
+    "subscriberNumber": "телефон для брони (API_CONTACT_PHONE или телефон пассажира)",
+}
+
+# То же для каждого пассажира: суффикс подставляется на месте.
+REQUIRED_PASSENGER_FIELDS = {
+    "name": "имя",
+    "surname": "фамилия",
+    "dob": "дата рождения",
+    "docser": "номер документа",
+    "expdt": "срок действия документа",
+}
+
+
+def missing_booking_fields(payload: dict[str, Any]) -> list[str]:
+    """Чего не хватает в payload, человеческими словами. Пустой список — всё на месте."""
+    missing = [
+        label
+        for field, label in REQUIRED_BOOKING_FIELDS.items()
+        if not str(payload.get(field) or "").strip()
+    ]
+
+    # Пассажирские поля идут с суффиксами: adultname1, childdob2 и так далее.
+    for key, value in payload.items():
+        for field, label in REQUIRED_PASSENGER_FIELDS.items():
+            prefix = _passenger_field_prefix(key, field)
+            if prefix is not None and not str(value or "").strip():
+                missing.append(f"{label} пассажира ({key})")
+    return missing
+
+
+def _passenger_field_prefix(key: str, field: str) -> str | None:
+    """`adultdocser1` + `docser` → `adult1`. Не подходит — None."""
+    for pax_type, prefix in PAX_PREFIX.items():  # noqa: B007 — имя типа не нужно
+        if key.startswith(prefix) and key[len(prefix):].startswith(field):
+            tail = key[len(prefix) + len(field):]
+            if tail.isdigit():
+                return f"{prefix}{tail}"
+    return None
+
+
 def _short(value: Any, limit: int = 300) -> str:
     text = str(value)
     return text if len(text) <= limit else f"{text[:limit]}… (+{len(text) - limit} симв.)"
@@ -738,6 +788,17 @@ def try_auto_book(
     flight = info.picked
     passengers = get_passengers(verbose=False)
     payload = build_create_booking_payload(info, flight, passengers=passengers)
+
+    # Проверяем ДО записи в журнал и до POST: запрос с пустым обязательным полем
+    # сервер отвергнет, а слот будет потрачен. Брони при этом точно нет —
+    # значит это достоверный отказ, поиск может продолжаться.
+    missing = missing_booking_fields(payload)
+    if missing:
+        return BookingResult(
+            ok=False,
+            flight=flight,
+            error=f"нечем бронировать, не заполнено: {', '.join(missing)}",
+        )
 
     key = compute_booking_key(info, flight, passengers)
     guard = guard or BookingGuard(BOOKINGS_JOURNAL)
