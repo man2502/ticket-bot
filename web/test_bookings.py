@@ -558,3 +558,128 @@ def test_old_database_allows_bookings_without_job(
     con.commit()
     assert list(con.execute("PRAGMA foreign_key_check")) == []
     con.close()
+
+
+# --------------------------------------------------------------------------
+# Новая бронь по тому же ключу
+# --------------------------------------------------------------------------
+
+
+def _rebook(service: str, key: str, *, number: str, url: str) -> None:
+    """Снять блокировку и забронировать заново — как это делает --force-rebook."""
+    from core.booking_guard import BookingGuard
+    from web.services.bookings import journal_path
+
+    guard = BookingGuard(journal_path(service))
+    guard.clear_all()
+    guard.begin(key)
+    guard.settle(key, ok=True, booking_number=number, form_url=url)
+
+
+def test_second_booking_with_the_same_key_is_picked_up(db) -> None:
+    """
+    Ключ брони — это «пассажир + рейс + дата», а не конкретная бронь.
+
+    После снятия блокировки по тому же ключу появляется НОВАЯ бронь с новым
+    номером. Панель, сверявшая только ключ, считала её уже известной
+    и молчала — так потерялась 46MEMB, хотя письмо про неё никто не получил.
+    """
+    from web.models import Booking
+    from web.services.bookings import sync_from_journal
+
+    job = _job(db, service="airlines")
+    _write_journal("airlines", [{"key": "k1", "number": "46MBJ0", "url": "https://bank.tm/1"}])
+    sync_from_journal(db, job)
+
+    _rebook("airlines", "k1", number="46MEMB", url="https://bank.tm/2")
+    created = sync_from_journal(db, job)
+
+    assert [b.booking_number for b in created] == ["46MEMB"]
+    assert db.query(Booking).count() == 2, "обе брони должны остаться в панели"
+
+
+def test_same_record_twice_is_still_skipped(db) -> None:
+    """Сверка по содержимому не должна ломать защиту от повторной рассылки."""
+    from web.models import Booking
+    from web.services.bookings import sync_from_journal
+
+    job = _job(db, service="airlines")
+    _write_journal("airlines", [{"key": "k1", "number": "46MBJ0", "url": "https://bank.tm/1"}])
+
+    assert len(sync_from_journal(db, job)) == 1
+    assert sync_from_journal(db, job) == []
+    assert db.query(Booking).count() == 1
+
+
+def test_pending_that_became_done_is_updated_not_duplicated(db) -> None:
+    """
+    `pending`, ставший `done`, — это та же попытка, а не вторая бронь.
+
+    Плодить на неё вторую строку значило бы показать человеку две брони
+    там, где она одна.
+    """
+    from core.booking_guard import BookingGuard
+    from web.models import Booking
+    from web.services.bookings import journal_path, sync_from_journal
+
+    job = _job(db, service="airlines")
+    guard = BookingGuard(journal_path("airlines"))
+    guard.begin("k1")
+
+    first = sync_from_journal(db, job)
+    assert [b.status for b in first] == ["pending"]
+
+    guard.settle("k1", ok=True, booking_number="46MEMB", form_url="https://bank.tm/2")
+    second = sync_from_journal(db, job)
+
+    assert db.query(Booking).count() == 1, "должна быть одна бронь, а не две"
+    row = db.query(Booking).one()
+    assert row.status == "done"
+    assert row.booking_number == "46MEMB"
+    # Ссылка появилась только сейчас — про неё нужно сообщить.
+    assert second == [row]
+
+
+def test_pending_without_link_is_not_announced_twice(db) -> None:
+    """Пока ссылки нет, сообщать не о чем — и повторно тоже."""
+    from core.booking_guard import BookingGuard
+    from web.services.bookings import journal_path, sync_from_journal
+
+    job = _job(db, service="airlines")
+    guard = BookingGuard(journal_path("airlines"))
+    guard.begin("k1")
+    sync_from_journal(db, job)
+
+    guard.settle("k1", ok=False, detail="мест нет")
+    created = sync_from_journal(db, job)
+
+    assert created == [], "отказ без ссылки — не повод для письма"
+
+
+def test_rebooked_pair_notifies_only_about_the_new_one(db, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Письмо должно уйти по новой броне и только по ней."""
+    import web.services.notifications as notifications
+    from web.services.runner import _collect_bookings
+
+    subjects = []
+    monkeypatch.setattr(
+        notifications,
+        "send_email",
+        lambda db, *, to, subject, body: subjects.append(subject)
+        or notifications.SendResult(channel="email", ok=True, recipient=to),
+    )
+    monkeypatch.setattr(notifications, "send_sms", lambda db, **k: None)
+    from web.services.settings import save_settings
+
+    save_settings(db, {"default_notify_email": "pay@example.com"})
+
+    job = _job(db, service="airlines")
+    _write_journal("airlines", [{"key": "k1", "number": "46MBJ0", "url": "https://bank.tm/1"}])
+    _collect_bookings(db, job)
+    subjects.clear()
+
+    _rebook("airlines", "k1", number="46MEMB", url="https://bank.tm/2")
+    _collect_bookings(db, job)
+
+    assert len(subjects) == 1
+    assert "46MEMB" in subjects[0]

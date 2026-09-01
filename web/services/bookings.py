@@ -35,6 +35,8 @@ from web.services.bot_env import SERVICE_JOURNALS, SERVICE_DIRS  # noqa: E402
 
 __all__ = [
     "SERVICE_ROUTE_UNKNOWN",
+    "booking_route",
+    "booking_passengers",
     "sync_orphan_bookings",
     "notify_orphan_bookings",
     "journal_path",
@@ -83,48 +85,9 @@ def sync_from_journal(db, job: Job) -> list[Booking]:
     Возвращает только НОВЫЕ записи — по ним потом уходит уведомление, и слать
     его повторно при каждом обновлении страницы нельзя.
     """
-    guard = _guard(job.service)
     started = job.started_at or dt.datetime.min
-
-    # Ключи всех броней сервиса, а не только этого процесса. Ту же запись мог
-    # уже подобрать обход журнала (`sync_orphan_bookings`) — если смотреть
-    # только на свои, она добавилась бы вторым разом и уведомление ушло дважды.
-    known = {
-        booking.guard_key: booking
-        for booking in db.query(Booking).filter(Booking.service == job.service).all()
-    }
-
-    created: list[Booking] = []
-    for record in guard.records():
-        existing = known.get(record.booking_key)
-        if existing is not None:
-            # Бронь уже есть. Если она бесхозная и по времени наша — присваиваем
-            # процессу, чтобы в карточке было видно, откуда она взялась.
-            # Повторно не рассылаем: про неё уже сообщили.
-            if existing.job_id is None and _belongs_to(record, started):
-                existing.job_id = job.id
-                db.commit()
-            continue
-
-        if not _belongs_to(record, started):
-            # Попытка из прошлого запуска — не наша.
-            continue
-
-        booking = Booking(
-            job_id=job.id,
-            service=job.service,
-            status=record.status,
-            guard_key=record.booking_key,
-            booking_number=record.booking_number,
-            payment_url=record.form_url,
-            detail=record.detail,
-        )
-        db.add(booking)
-        created.append(booking)
-
-    if created:
-        db.commit()
-    return created
+    records = [r for r in _guard(job.service).records() if _belongs_to(r, started)]
+    return _import_records(db, records, service=job.service, job_id=job.id)
 
 
 def _belongs_to(record, started: dt.datetime) -> bool:
@@ -152,36 +115,104 @@ def sync_orphan_bookings(db) -> list[Booking]:
         if not journal_path(service.value).exists():
             continue
 
-        known = {
-            booking.guard_key
-            for booking in db.query(Booking)
-            .filter(Booking.service == service.value)
-            .all()
-        }
-
         # Архив тоже смотрим: там лежат записи, с которых сняли блокировку
         # (`--force-rebook` или кнопка «разблокировать»). Настоящая бронь
         # с номером и ссылкой на оплату от этого никуда не делась.
         guard = _guard(service.value)
-        for record in [*guard.records(), *guard.archived()]:
-            if record.booking_key in known:
-                continue
-            known.add(record.booking_key)
-            booking = Booking(
-                job_id=None,
-                service=service.value,
-                status=record.status,
-                guard_key=record.booking_key,
-                booking_number=record.booking_number,
-                payment_url=record.form_url,
-                detail=record.detail,
+        records = [*guard.records(), *guard.archived()]
+        for record in records:
+            # Процесс мог отработать и завершиться раньше, чем панель дошла
+            # до журнала. Если попытка укладывается в его время, это его бронь —
+            # тогда в письме будет настоящий маршрут, а не «запуск вне панели».
+            owner = _job_around(db, service.value, record.started_at)
+            created.extend(
+                _import_records(db, [record], service=service.value, job_id=owner)
             )
-            db.add(booking)
-            created.append(booking)
 
-    if created:
-        db.commit()
     return created
+
+
+def _job_around(db, service: str, started_at: str) -> int | None:
+    """Процесс того же сервиса, во время которого шла попытка. None — не нашёлся."""
+    began = _parse_time(started_at)
+    if began is None:
+        return None
+
+    for job in (
+        db.query(Job)
+        .filter(Job.service == service, Job.started_at.isnot(None))
+        .order_by(Job.started_at.desc())
+        .limit(20)
+        .all()
+    ):
+        finished = job.finished_at or dt.datetime.now()
+        if job.started_at <= began <= finished:
+            return job.id
+    return None
+
+
+def _import_records(db, records, *, service: str, job_id: int | None) -> list[Booking]:
+    """
+    Перенести записи журнала в таблицу броней. Вернуть те, о которых стоит сообщить.
+
+    Сверяем не только ключ, но и номер брони. Ключ — это «пассажир + рейс +
+    дата», а не конкретная бронь: после снятия блокировки по тому же ключу
+    появляется НОВАЯ бронь с новым номером. Ровно так и потерялась 46MEMB —
+    панель увидела знакомый ключ у записи с номером 46MBJ0 и промолчала.
+
+    Незакрытую запись того же ключа дополняем на месте: `pending`, ставший
+    `done`, — это та же попытка, а не вторая бронь.
+    """
+    rows: dict[str, list[Booking]] = {}
+    for booking in db.query(Booking).filter(Booking.service == service).all():
+        rows.setdefault(booking.guard_key, []).append(booking)
+
+    touched: list[Booking] = []
+    for record in records:
+        same_key = rows.setdefault(record.booking_key, [])
+
+        if any(
+            row.status == record.status and row.booking_number == record.booking_number
+            for row in same_key
+        ):
+            # Ровно это уже лежит в базе. Если бронь бесхозная, а процесс её
+            # признал — присваиваем, но повторно не рассылаем.
+            if job_id is not None:
+                for row in same_key:
+                    if row.job_id is None:
+                        row.job_id = job_id
+            continue
+
+        stale = next((row for row in same_key if not row.booking_number), None)
+        if stale is not None:
+            # Та же попытка дозрела: pending → done. Дополняем, а не дублируем.
+            had_url = bool(stale.payment_url)
+            stale.status = record.status
+            stale.booking_number = record.booking_number
+            stale.payment_url = record.form_url
+            stale.detail = record.detail
+            if job_id is not None and stale.job_id is None:
+                stale.job_id = job_id
+            # Сообщать есть о чём, только если ссылка появилась сейчас.
+            if record.form_url and not had_url:
+                touched.append(stale)
+            continue
+
+        booking = Booking(
+            job_id=job_id,
+            service=service,
+            status=record.status,
+            guard_key=record.booking_key,
+            booking_number=record.booking_number,
+            payment_url=record.form_url,
+            detail=record.detail,
+        )
+        db.add(booking)
+        same_key.append(booking)
+        touched.append(booking)
+
+    db.commit()
+    return touched
 
 
 def notify_orphan_bookings(db) -> list[Booking]:
@@ -198,10 +229,10 @@ def notify_orphan_bookings(db) -> list[Booking]:
 
     for booking in payable:
         subject, body, sms = format_booking_message(
-            route=SERVICE_ROUTE_UNKNOWN.get(booking.service, booking.service),
+            route=booking_route(booking),
             payment_url=booking.payment_url,
             booking_number=booking.booking_number,
-            passengers="",
+            passengers=booking_passengers(booking),
         )
         try:
             notify_booking(
@@ -222,6 +253,24 @@ SERVICE_ROUTE_UNKNOWN = {
     Service.AIRLINES.value: "Самолёты (запуск вне панели)",
     Service.RAILWAY.value: "Поезда (запуск вне панели)",
 }
+
+
+def booking_route(booking: Booking) -> str:
+    """Маршрут для письма: из процесса, а если его нет — честная заглушка."""
+    if booking.job is not None:
+        job = booking.job
+        return f"{job.source} → {job.destination}, {job.depart_date}"
+    return SERVICE_ROUTE_UNKNOWN.get(booking.service, booking.service)
+
+
+def booking_passengers(booking: Booking) -> str:
+    """Пассажиры для письма. Без процесса их взять неоткуда — пустая строка."""
+    if booking.job is None:
+        return ""
+    return ", ".join(
+        f"{link.passenger.last_name} {link.passenger.first_name}"
+        for link in sorted(booking.job.passengers, key=lambda x: x.position)
+    )
 
 
 def blocking_attempt(service: str):

@@ -18,7 +18,8 @@ from web.services.bookings import (
     STATUS_TITLES,
     blocking_attempt,
     journal_path,
-    SERVICE_ROUTE_UNKNOWN,
+    booking_passengers,
+    booking_route,
     notify_orphan_bookings,
     unblock_service,
 )
@@ -149,22 +150,14 @@ def resend(
     if not booking.payment_url:
         return _page(request, user, db, is_error=True, message="У этой брони нет ссылки на оплату")
 
-    if job is None:
-        route = SERVICE_ROUTE_UNKNOWN.get(booking.service, booking.service)
-        names, to_email, to_phone = "", "", ""
-    else:
-        route = f"{job.source} → {job.destination}, {job.depart_date}"
-        names = ", ".join(
-            f"{link.passenger.last_name} {link.passenger.first_name}"
-            for link in sorted(job.passengers, key=lambda x: x.position)
-        )
-        to_email, to_phone = job.notify_email, job.notify_phone
+    to_email = job.notify_email if job else ""
+    to_phone = job.notify_phone if job else ""
 
     subject, body, sms = format_booking_message(
-        route=route,
+        route=booking_route(booking),
         payment_url=booking.payment_url,
         booking_number=booking.booking_number,
-        passengers=names,
+        passengers=booking_passengers(booking),
     )
     results = notify_booking(
         db, subject=subject, body=body, sms_text=sms,
