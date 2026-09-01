@@ -30,7 +30,7 @@ REPO_ROOT = API_ROOT.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.booking_guard import BookingGuard, booking_key
+from core.booking_guard import AlreadySettled, BookingGuard, booking_key
 from core.term import green
 from api_client import RequestFailed, ResultUnknown, api_call
 from api_env import env, to_api_date
@@ -620,6 +620,37 @@ def _short(value: Any, limit: int = 300) -> str:
     return text if len(text) <= limit else f"{text[:limit]}… (+{len(text) - limit} симв.)"
 
 
+def _failure_reason(body: dict[str, Any]) -> str:
+    """
+    Собрать причину отказа из ответа сервера.
+
+    T5 кладёт в `message` короткую метку вроде «Inform» или «Error Create»,
+    а подробности — в `data`. Раньше бралась только метка, и в логе оставалось
+    `Inform (HTTP 400)`, по которому нельзя понять ровно ничего. Теперь
+    к метке добавляется всё, что удалось найти рядом, а если и этого мало —
+    сырой ответ целиком.
+    """
+    label = str(body.get("message") or "").strip()
+
+    details: list[str] = []
+    data = _parse_json_maybe(body.get("data"))
+    if isinstance(data, dict):
+        for field in ("message", "error", "detail", "description"):
+            value = data.get(field)
+            if isinstance(value, (str, int)) and str(value).strip() not in ("", "0"):
+                details.append(f"{field}={value}")
+    elif data not in (None, "", {}):
+        details.append(_short(data, 200))
+
+    parts = [part for part in (label, "; ".join(details)) if part]
+    if not parts:
+        return ""
+    # Короткая метка без подробностей бесполезна — прикладываем сырой ответ.
+    if len(parts) == 1 and len(parts[0]) < 40:
+        parts.append(f"ответ: {_short(body, 400)}")
+    return " · ".join(parts)
+
+
 def parse_booking_response(
     body: dict[str, Any] | str,
     *,
@@ -645,7 +676,7 @@ def parse_booking_response(
         return BookingResult(ok=False, unknown=True, error=f"ответ не JSON: {_short(body)}")
 
     if not body.get("success"):
-        message = str(body.get("message") or body.get("data") or "").strip()
+        message = _failure_reason(body)
         if message:
             # Сервер назвал причину — это достоверный отказ, брони нет.
             return BookingResult(ok=False, error=message)
@@ -818,7 +849,13 @@ def try_auto_book(
 
     # Пишем pending НА ДИСК до отправки: если процесс умрёт между POST и ответом,
     # следующий запуск увидит незакрытую попытку и не станет бронировать вслепую.
-    idempotency_key = guard.begin(key)
+    try:
+        idempotency_key = guard.begin(key)
+    except AlreadySettled as exc:
+        # Журнал знает про эту бронь больше, чем проверка выше: например,
+        # запись появилась между ними. Запрос не отправляем.
+        return BookingResult(ok=False, unknown=True, flight=flight, booking_key=key,
+                             error=str(exc))
 
     try:
         status, body = create_booking(
@@ -845,6 +882,10 @@ def try_auto_book(
 
     if verbose:
         print(f"[book-api] CreateBooking → HTTP {status}")
+        if status != 200 or not (isinstance(body, dict) and body.get("success")):
+            # Разбирать неудачу без ответа сервера невозможно: метка вроде
+            # «Inform» не говорит ничего, а второго шанса увидеть ответ нет.
+            print(f"[book-api] ответ сервера: {_short(body, 600)}")
 
     result = parse_booking_response(body, status=status)
     result.flight = flight

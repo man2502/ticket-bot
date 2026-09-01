@@ -159,9 +159,14 @@ def sync_orphan_bookings(db) -> list[Booking]:
             .all()
         }
 
-        for record in _guard(service.value).records():
+        # Архив тоже смотрим: там лежат записи, с которых сняли блокировку
+        # (`--force-rebook` или кнопка «разблокировать»). Настоящая бронь
+        # с номером и ссылкой на оплату от этого никуда не делась.
+        guard = _guard(service.value)
+        for record in [*guard.records(), *guard.archived()]:
             if record.booking_key in known:
                 continue
+            known.add(record.booking_key)
             booking = Booking(
                 job_id=None,
                 service=service.value,

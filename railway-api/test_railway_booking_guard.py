@@ -16,7 +16,15 @@ for path in (str(REPO_ROOT), str(REPO_ROOT / "railway")):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from core.booking_guard import DONE, FAILED, PENDING, UNKNOWN, BookingGuard, booking_key
+from core.booking_guard import (
+    DONE,
+    FAILED,
+    PENDING,
+    UNKNOWN,
+    AlreadySettled,
+    BookingGuard,
+    booking_key,
+)
 from railway_booking import parse_booking_response
 
 
@@ -44,10 +52,89 @@ def test_begin_persists_before_response(tmp_path: Path) -> None:
 
 
 def test_idempotency_key_stable_between_attempts(guard: BookingGuard) -> None:
+    """
+    Повтор после ДОСТОВЕРНОГО отказа несёт тот же idempotency-key.
+
+    Достоверный отказ означает, что брони нет, и попробовать ещё раз можно —
+    но если сервер всё-таки что-то создал, ключ не даст ему создать второе.
+    """
     first = guard.begin("k1")
-    guard.mark_unknown("k1", "таймаут")
+    guard.settle("k1", ok=False, detail="мест нет")
     second = guard.begin("k1")
     assert first == second, "повтор по тому же ключу должен нести тот же idempotency-key"
+
+
+@pytest.mark.parametrize("close", ["unknown", "done", "pending"])
+def test_begin_refuses_to_overwrite_a_closed_attempt(
+    guard: BookingGuard, close: str
+) -> None:
+    """
+    `begin` не должен затирать закрытую запись.
+
+    Так была потеряна настоящая бронь: успешная запись со статусом `done`
+    превратилась в `failed`, и номер с ссылкой на оплату исчезли из журнала,
+    хотя бронь у перевозчика осталась. Проверка есть и выше по коду, но
+    в операции, которая стоит второго счёта, одной проверки мало.
+    """
+    guard.begin("k1")
+    if close == "unknown":
+        guard.mark_unknown("k1", "таймаут")
+    elif close == "done":
+        guard.settle("k1", ok=True, booking_number="RW-1", form_url="https://bank.tm/1")
+    # pending остаётся как есть после begin()
+
+    with pytest.raises(AlreadySettled):
+        guard.begin("k1")
+
+
+def test_cleared_attempt_is_archived_not_erased(guard: BookingGuard) -> None:
+    """
+    Снятие блокировки не должно стирать след настоящей брони.
+
+    `--force-rebook` удалял запись целиком — вместе с номером и ссылкой
+    на оплату. Бронь у перевозчика при этом никуда не девалась, а узнать
+    про неё было уже неоткуда.
+    """
+    guard.begin("k1")
+    guard.settle("k1", ok=True, booking_number="RW-1", form_url="https://bank.tm/1")
+
+    guard.clear_all()
+
+    assert guard.get("k1") is None, "блокировка должна быть снята"
+    assert guard.blocking_attempt() is None
+    archived = list(guard.archived())
+    assert len(archived) == 1
+    assert archived[0].booking_number == "RW-1"
+    assert archived[0].form_url == "https://bank.tm/1"
+
+
+def test_archive_survives_reload(guard: BookingGuard) -> None:
+    guard.begin("k1")
+    guard.settle("k1", ok=True, booking_number="RW-1", form_url="https://bank.tm/1")
+    guard.clear_all()
+
+    reloaded = BookingGuard(guard.path)
+    assert [r.booking_number for r in reloaded.archived()] == ["RW-1"]
+
+
+def test_single_clear_also_archives(guard: BookingGuard) -> None:
+    guard.begin("k1")
+    guard.settle("k1", ok=True, booking_number="RW-2", form_url="https://bank.tm/2")
+
+    guard.clear("k1")
+
+    assert guard.get("k1") is None
+    assert [r.booking_number for r in guard.archived()] == ["RW-2"]
+
+
+def test_cleared_key_can_be_booked_again(guard: BookingGuard) -> None:
+    """Архив — это память, а не блокировка: после снятия бронировать можно."""
+    guard.begin("k1")
+    guard.settle("k1", ok=True, booking_number="RW-1")
+    guard.clear_all()
+
+    guard.begin("k1")  # не должно бросить
+    assert guard.get("k1").status == PENDING
 
 
 def test_failed_does_not_block(guard: BookingGuard) -> None:

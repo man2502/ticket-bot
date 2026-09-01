@@ -25,7 +25,20 @@ from typing import Any, Iterable
 
 from core.state import load_json, save_json
 
-__all__ = ["BookingGuard", "AttemptRecord", "PENDING", "DONE", "UNKNOWN", "FAILED"]
+__all__ = [
+    "BookingGuard",
+    "AttemptRecord",
+    "AlreadySettled",
+    "PENDING",
+    "DONE",
+    "UNKNOWN",
+    "FAILED",
+]
+
+
+class AlreadySettled(RuntimeError):
+    """Попытка перезаписать закрытую запись журнала. Бронь могла бы удвоиться."""
+
 
 PENDING = "pending"  # запрос отправлен, ответа ещё нет
 DONE = "done"  # бронь точно создана
@@ -140,8 +153,19 @@ class BookingGuard:
 
         Запись на диск здесь обязательна: если процесс умрёт сразу после POST,
         следующий запуск увидит `pending` и не станет бронировать вслепую.
+
+        Закрытую запись не перезаписываем. Раньше `begin` затирал что угодно,
+        включая `done`: одна успешная бронь превратилась так в «failed» —
+        и номер с ссылкой на оплату исчезли из журнала, хотя бронь у
+        перевозчика осталась. Проверка выше по коду это ловит, но полагаться
+        на одну проверку в операции, которая стоит второго счёта, нельзя.
         """
         existing = self.get(key)
+        if existing is not None and existing.status in (PENDING, DONE, UNKNOWN):
+            raise AlreadySettled(
+                f"по ключу {key} уже есть попытка со статусом {existing.status}"
+                + (f" (бронь {existing.booking_number})" if existing.booking_number else "")
+            )
         idem = existing.idempotency_key if existing else str(uuid.uuid4())
         record = AttemptRecord(
             booking_key=key,
@@ -192,10 +216,42 @@ class BookingGuard:
         self._save()
 
     def clear(self, key: str) -> None:
-        """Снять запись — только по явному решению человека (`--force-rebook`)."""
+        """
+        Снять одну блокировку — только по явному решению человека.
+
+        Как и `clear_all`, запись не удаляет, а уводит в архив: там может быть
+        настоящая бронь с номером и ссылкой на оплату.
+        """
+        self._archive(key)
         self._data["attempts"].pop(key, None)
         self._save()
 
     def clear_all(self) -> None:
+        """
+        Снять все блокировки — «бронируй заново, я разобрался».
+
+        Записи не удаляются, а уезжают в архив. Среди них может быть настоящая
+        бронь с номером и ссылкой на оплату: `--force-rebook` стирал её вместе
+        с блокировкой, и единственный след живой брони пропадал.
+        """
+        for key in list(self._data.get("attempts", {})):
+            self._archive(key)
         self._data["attempts"] = {}
         self._save()
+
+    def _archive(self, key: str) -> None:
+        """Перенести запись в архив, сохранив момент снятия блокировки."""
+        record = self._data.get("attempts", {}).get(key)
+        if not record:
+            return
+        archive = self._data.setdefault("archive", {})
+        archive[f"{key}:{_now()}"] = {**record, "archived_at": _now()}
+
+    def archived(self) -> Iterable[AttemptRecord]:
+        """Снятые с блокировки попытки. Нужны, чтобы не потерять их из виду."""
+        for raw in self._data.get("archive", {}).values():
+            fields = {k: v for k, v in raw.items() if k != "archived_at"}
+            try:
+                yield AttemptRecord(**fields)
+            except TypeError:
+                continue

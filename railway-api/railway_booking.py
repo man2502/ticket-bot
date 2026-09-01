@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from core.booking_guard import BookingGuard, booking_key
+from core.booking_guard import AlreadySettled, BookingGuard, booking_key
 from notify_helper import notify
 from passenger_loader import get_passengers
 from railway_client import RequestFailed, ResultUnknown, api_call
@@ -345,7 +345,11 @@ def try_auto_book(
 
     # Запись на диск ДО отправки: если процесс умрёт между POST и ответом,
     # следующий запуск увидит pending и не станет бронировать вслепую.
-    idempotency_key = guard.begin(key)
+    try:
+        idempotency_key = guard.begin(key)
+    except AlreadySettled as exc:
+        # Журнал знает про эту бронь больше, чем проверка выше. Запрос не шлём.
+        return BookingResult(ok=False, unknown=True, booking_key=key, error=str(exc))
 
     try:
         status, body = create_booking(

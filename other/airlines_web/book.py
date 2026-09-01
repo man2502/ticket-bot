@@ -57,6 +57,7 @@ from steps import (
     wait_for_tickets_list,
     wait_search_rate_limit,
 )
+from core.booking_guard import AlreadySettled
 from core.term import green, light_purple, orange, purple, red
 from notify_helper import flush_notifications, gmail_configured, notify
 from passenger_loader import get_passenger_by_id, get_passengers, get_passengers_by_type
@@ -1233,7 +1234,12 @@ def click_podtverdit(page, *, guard=None, booking_key_value: str = "") -> WebBoo
     # Запись pending уходит на диск ДО клика: если процесс умрёт сразу после
     # него, следующий запуск увидит незакрытую попытку и не станет бронировать.
     if guard is not None and booking_key_value:
-        guard.begin(booking_key_value)
+        try:
+            guard.begin(booking_key_value)
+        except AlreadySettled as exc:
+            # Кликать «Подтвердить» поверх существующей брони нельзя: это
+            # вторая бронь и второй счёт.
+            raise RuntimeError(f"бронь уже была: {exc}") from exc
 
     print("[booking] кликаю #booking-form-submit «Подтвердить»…")
     try:
