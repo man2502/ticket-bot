@@ -103,11 +103,9 @@ def _migrate() -> None:
         columns = {
             row[1] for row in conn.execute(text("PRAGMA table_info(service_configs)"))
         }
-        if not columns:
-            return
 
         # Период проверки вместо пары галочек «:00» и «:30».
-        if "check_period_sec" not in columns:
+        if columns and "check_period_sec" not in columns:
             conn.execute(
                 text(
                     "ALTER TABLE service_configs "
@@ -145,6 +143,86 @@ def _migrate() -> None:
         for dead in ("slot_00_enabled", "slot_30_enabled"):
             if dead in columns:
                 conn.execute(text(f"ALTER TABLE service_configs DROP COLUMN {dead}"))
+
+    # Отдельным соединением: внутри транзакции PRAGMA foreign_keys не действует.
+    _allow_bookings_without_job()
+
+
+def _allow_bookings_without_job() -> None:
+    """
+    Снять NOT NULL с `bookings.job_id`.
+
+    Бронь существует у перевозчика независимо от процесса: бота могли запустить
+    из командной строки, а процесс — удалить уже после брони. С NOT NULL такие
+    брони было некуда положить, и ссылка на оплату терялась совсем.
+
+    SQLite не умеет ALTER COLUMN, поэтому таблица пересобирается по порядку из
+    документации: новая таблица → перенос данных → удаление старой → переименование.
+
+    Порядок именно такой не случайно. Первая попытка переименовывала СТАРУЮ
+    таблицу в `bookings_old`, и SQLite услужливо переписывал внешний ключ
+    в `notification_logs` на новое имя. После удаления `bookings_old` любая
+    запись в журнал отправок падала с «no such table: main.bookings_old».
+    Если же переименовывать новую таблицу В `bookings`, чужие ссылки остаются
+    нетронутыми — они и так указывают на это имя.
+
+    Внешние ключи на время работы выключены: `DROP TABLE bookings` при
+    включённых проверках спотыкается о строки `notification_logs`, которые
+    на неё ссылаются. Пересобирается отдельным соединением, потому что
+    `PRAGMA foreign_keys` внутри транзакции молча не действует.
+    """
+    raw = get_engine().raw_connection()
+    try:
+        cursor = raw.cursor()
+        if not _bookings_job_id_is_required(cursor):
+            return
+
+        cursor.execute("PRAGMA foreign_keys=OFF")
+        try:
+            cursor.execute("BEGIN")
+            cursor.execute(
+                """
+                CREATE TABLE bookings_new (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+                    service VARCHAR(16) NOT NULL,
+                    status VARCHAR(16) NOT NULL,
+                    guard_key VARCHAR(64) NOT NULL,
+                    booking_number VARCHAR(64) NOT NULL,
+                    payment_url TEXT NOT NULL,
+                    detail TEXT NOT NULL,
+                    created_at DATETIME NOT NULL
+                )
+                """
+            )
+            cursor.execute(
+                "INSERT INTO bookings_new (id, job_id, service, status, guard_key, "
+                "booking_number, payment_url, detail, created_at) "
+                "SELECT id, job_id, service, status, guard_key, booking_number, "
+                "payment_url, detail, created_at FROM bookings"
+            )
+            cursor.execute("DROP TABLE bookings")
+            cursor.execute("ALTER TABLE bookings_new RENAME TO bookings")
+            cursor.execute("CREATE INDEX ix_bookings_job_id ON bookings (job_id)")
+            raw.commit()
+        except Exception:
+            raw.rollback()
+            raise
+        finally:
+            cursor.execute("PRAGMA foreign_keys=ON")
+
+        print("[db] bookings.job_id теперь может быть пустым")
+    finally:
+        raw.close()
+
+
+def _bookings_job_id_is_required(cursor) -> bool:
+    """Есть ли ещё NOT NULL на bookings.job_id. Нет таблицы — считаем, что нет."""
+    cursor.execute("PRAGMA table_info(bookings)")
+    for row in cursor.fetchall():
+        if row[1] == "job_id":
+            return bool(row[3])  # row[3] — notnull
+    return False
 
 
 def _seed_defaults() -> None:

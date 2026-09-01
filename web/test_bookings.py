@@ -330,3 +330,231 @@ def test_notification_contains_payment_link() -> None:
     assert "https://bank.tm/pay/77" in body
     assert "TEST ANVAR" in body
     assert "https://bank.tm/pay/77" in sms
+
+
+# --------------------------------------------------------------------------
+# Брони без процесса
+# --------------------------------------------------------------------------
+
+
+def test_journal_booking_without_job_is_picked_up(db) -> None:
+    """
+    Бота могли запустить из командной строки. Бронь при этом настоящая:
+    у перевозчика она есть, счёт выставлен, ссылка лежит в журнале. Раньше
+    панель её не видела вовсе, и человек узнавал о ней, только открыв JSON.
+    """
+    from web.services.bookings import sync_orphan_bookings
+
+    _write_journal("airlines", [{"key": "k1", "number": "46MBJ0", "url": "https://bank.tm/1"}])
+
+    created = sync_orphan_bookings(db)
+
+    assert len(created) == 1
+    assert created[0].job_id is None
+    assert created[0].booking_number == "46MBJ0"
+
+
+def test_orphan_sync_is_idempotent(db) -> None:
+    """Обход зовётся при каждом открытии страницы — письмо не должно уходить дважды."""
+    from web.models import Booking
+    from web.services.bookings import sync_orphan_bookings
+
+    _write_journal("airlines", [{"key": "k1", "number": "A1", "url": "https://bank.tm/1"}])
+
+    assert len(sync_orphan_bookings(db)) == 1
+    assert sync_orphan_bookings(db) == []
+    assert db.query(Booking).count() == 1
+
+
+def test_orphan_notification_carries_the_link(db, monkeypatch: pytest.MonkeyPatch) -> None:
+    from web.services.bookings import notify_orphan_bookings
+    import web.services.notifications as notifications
+
+    sent = []
+    monkeypatch.setattr(
+        notifications,
+        "send_email",
+        lambda db, *, to, subject, body: sent.append(body)
+        or notifications.SendResult(channel="email", ok=True, recipient=to),
+    )
+    monkeypatch.setattr(notifications, "send_sms", lambda db, **k: None)
+    from web.services.settings import save_settings
+
+    save_settings(db, {"default_notify_email": "pay@example.com"})
+    _write_journal("airlines", [{"key": "k1", "number": "A1", "url": "https://bank.tm/pay"}])
+
+    notify_orphan_bookings(db)
+
+    assert len(sent) == 1
+    assert "https://bank.tm/pay" in sent[0]
+
+
+def test_orphan_without_link_is_not_announced(db, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Отказ и «под вопросом» в панель попадают, но письмом о них не трубим:
+    ссылки нет, платить нечего, а тревогу человек увидит в разделе «Брони».
+    """
+    from web.models import Booking
+    from web.services.bookings import notify_orphan_bookings
+    import web.services.notifications as notifications
+
+    sent = []
+    monkeypatch.setattr(
+        notifications,
+        "send_email",
+        lambda db, **k: sent.append(1)
+        or notifications.SendResult(channel="email", ok=True, recipient="x"),
+    )
+    monkeypatch.setattr(notifications, "send_sms", lambda db, **k: None)
+
+    _write_journal("airlines", [{"key": "k1", "status": "failed", "detail": "Error Create"}])
+    notify_orphan_bookings(db)
+
+    assert sent == []
+    assert db.query(Booking).count() == 1
+
+
+def test_job_adopts_its_orphan_instead_of_duplicating(db) -> None:
+    """
+    Обход журнала мог опередить процесс. Создать вторую запись значило бы
+    отправить человеку второе письмо про ту же бронь.
+    """
+    from web.models import Booking
+    from web.services.bookings import sync_from_journal, sync_orphan_bookings
+
+    job = _job(db, service="railway")
+    _write_journal("railway", [{"key": "k1", "number": "RW-1", "url": "https://bank.tm/1"}])
+
+    sync_orphan_bookings(db)
+    created = sync_from_journal(db, job)
+
+    assert created == [], "процесс не должен создавать вторую запись"
+    assert db.query(Booking).count() == 1
+    assert db.query(Booking).one().job_id == job.id, "бронь должна прирасти к процессу"
+
+
+def test_foreign_orphan_is_not_adopted(db) -> None:
+    """Попытка из прошлого запуска остаётся бесхозной — она не этого процесса."""
+    from web.models import Booking
+    from web.services.bookings import sync_from_journal, sync_orphan_bookings
+
+    _write_journal("railway", [{"key": "k1", "number": "RW-1", "url": "https://bank.tm/1"}])
+    sync_orphan_bookings(db)
+
+    job = _job(db, service="railway", started=dt.datetime.now() + dt.timedelta(hours=1))
+    assert sync_from_journal(db, job) == []
+    assert db.query(Booking).one().job_id is None
+
+
+def test_deleting_a_job_keeps_the_booking(db) -> None:
+    """
+    Удаление поиска не должно стирать бронь: она есть у перевозчика, за неё
+    выставлен счёт, и вместе с ней исчезла бы ссылка на оплату.
+    """
+    from web.models import Booking
+    from web.services.bookings import sync_from_journal
+    from web.services.runner import delete_job
+
+    job = _job(db, service="railway")
+    _write_journal("railway", [{"key": "k1", "number": "RW-1", "url": "https://bank.tm/1"}])
+    sync_from_journal(db, job)
+
+    delete_job(db, job)
+
+    booking = db.query(Booking).one()
+    assert booking.job_id is None
+    assert booking.payment_url == "https://bank.tm/1"
+
+
+def test_deleted_job_booking_is_not_announced_again(db) -> None:
+    """
+    После удаления процесса запись остаётся, и обход журнала не должен
+    посчитать её новой — иначе письмо уходило бы после каждой уборки.
+    """
+    from web.services.bookings import sync_from_journal, sync_orphan_bookings
+    from web.services.runner import delete_job
+
+    job = _job(db, service="railway")
+    _write_journal("railway", [{"key": "k1", "number": "RW-1", "url": "https://bank.tm/1"}])
+    sync_from_journal(db, job)
+    delete_job(db, job)
+
+    assert sync_orphan_bookings(db) == []
+
+
+def test_old_database_allows_bookings_without_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Пересборка таблицы не должна ломать внешний ключ из журнала отправок.
+
+    Первая версия миграции переименовывала старую таблицу, и SQLite переписывал
+    ссылку в `notification_logs` на временное имя. После удаления временной
+    таблицы любая запись в журнал падала с «no such table».
+    """
+    import sqlite3
+
+    import web.config as config
+    import web.crypto as crypto
+    import web.db as db_module
+
+    old_db = tmp_path / "old.db"
+    con = sqlite3.connect(old_db)
+    con.executescript(
+        """
+        CREATE TABLE jobs (id INTEGER NOT NULL PRIMARY KEY);
+        CREATE TABLE bookings (
+            id INTEGER NOT NULL PRIMARY KEY,
+            job_id INTEGER NOT NULL REFERENCES jobs(id),
+            service VARCHAR(16) NOT NULL,
+            status VARCHAR(16) NOT NULL,
+            guard_key VARCHAR(64) NOT NULL,
+            booking_number VARCHAR(64) NOT NULL,
+            payment_url TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            created_at DATETIME NOT NULL
+        );
+        CREATE TABLE notification_logs (
+            id INTEGER NOT NULL PRIMARY KEY,
+            booking_id INTEGER REFERENCES bookings(id),
+            channel VARCHAR(8) NOT NULL,
+            recipient VARCHAR(255) NOT NULL,
+            subject VARCHAR(255) NOT NULL,
+            is_sent BOOLEAN NOT NULL,
+            error TEXT NOT NULL,
+            created_at DATETIME NOT NULL
+        );
+        INSERT INTO jobs VALUES (1);
+        INSERT INTO bookings VALUES
+            (1, 1, 'railway', 'done', 'k1', 'RW-1', 'https://bank.tm/1', '', '2026-08-20 12:00:00');
+        """
+    )
+    con.commit()
+    con.close()
+
+    monkeypatch.setenv("TICKET_DB_PATH", str(old_db))
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(crypto, "SECRET_KEY_FILE", tmp_path / "secret.key")
+    monkeypatch.setattr(crypto, "SESSION_KEY_FILE", tmp_path / "session.key")
+    monkeypatch.delenv("TICKET_SECRET_KEY", raising=False)
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_SessionFactory", None)
+
+    db_module.init_db()
+
+    con = sqlite3.connect(old_db)
+    job_id = [row for row in con.execute("PRAGMA table_info(bookings)") if row[1] == "job_id"][0]
+    assert not job_id[3], "NOT NULL должен уйти"
+
+    # Данные на месте.
+    assert con.execute("SELECT booking_number FROM bookings").fetchone()[0] == "RW-1"
+    # Ссылка из журнала отправок ведёт в существующую таблицу.
+    targets = {row[2] for row in con.execute("PRAGMA foreign_key_list(notification_logs)")}
+    assert targets == {"bookings"}
+    con.execute(
+        "INSERT INTO notification_logs (booking_id, channel, recipient, subject, "
+        "is_sent, error, created_at) VALUES (1, 'email', 'a@b.c', 's', 1, '', '2026-08-20')"
+    )
+    con.commit()
+    assert list(con.execute("PRAGMA foreign_key_check")) == []
+    con.close()

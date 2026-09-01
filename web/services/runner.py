@@ -474,31 +474,34 @@ def _collect_bookings(db, job: Job) -> None:
 
 def delete_job(db, job: Job) -> None:
     """
-    Удалить процесс вместе с логами, пассажирами и бронями.
+    Удалить процесс вместе с логами и пассажирами. Брони остаются.
 
     Перед удалением развязываем ссылки, у которых нет каскада:
 
-    * `notification_logs.booking_id` — история отправок переживает процесс
-      намеренно. Запись «ссылка на оплату ушла на такой-то адрес» ценна сама
-      по себе, особенно если бронь была настоящей и оплаченной.
+    * `bookings.job_id` — бронь существует у перевозчика и за неё выставлен
+      счёт. Удалять её вместе с поиском нельзя: человек стёр бы ссылку
+      на оплату, ничего про это не поняв. Бронь остаётся в разделе «Брони»
+      без процесса.
     * `captcha_samples.job_id` — размеченная капча остаётся в датасете
       независимо от того, жив ли процесс, при котором она появилась.
+
+    История отправок (`notification_logs`) не трогается вовсе: она привязана
+    к брони, а бронь теперь переживает удаление процесса.
 
     В новых базах это делает `ondelete="SET NULL"`, но существующие им не
     исправить: SQLite не умеет менять внешние ключи через ALTER TABLE.
     Поэтому развязываем явно — работает на любой базе.
     """
-    from web.models import Booking, CaptchaSample, NotificationLog
+    from web.models import Booking, CaptchaSample
 
-    booking_ids = [
-        row.id for row in db.query(Booking).filter(Booking.job_id == job.id).all()
-    ]
-    if booking_ids:
-        (
-            db.query(NotificationLog)
-            .filter(NotificationLog.booking_id.in_(booking_ids))
-            .update({NotificationLog.booking_id: None}, synchronize_session=False)
-        )
+    # synchronize_session="fetch", а не False: сессия живёт с
+    # expire_on_commit=False, и уже загруженные брони остались бы в памяти
+    # со старым job_id — страница показала бы их принадлежащими удалённому поиску.
+    (
+        db.query(Booking)
+        .filter(Booking.job_id == job.id)
+        .update({Booking.job_id: None}, synchronize_session="fetch")
+    )
 
     (
         db.query(CaptchaSample)

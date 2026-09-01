@@ -34,6 +34,9 @@ from web.models import Booking, Job, Service  # noqa: E402
 from web.services.bot_env import SERVICE_JOURNALS, SERVICE_DIRS  # noqa: E402
 
 __all__ = [
+    "SERVICE_ROUTE_UNKNOWN",
+    "sync_orphan_bookings",
+    "notify_orphan_bookings",
     "journal_path",
     "sync_from_journal",
     "blocking_attempt",
@@ -83,18 +86,27 @@ def sync_from_journal(db, job: Job) -> list[Booking]:
     guard = _guard(job.service)
     started = job.started_at or dt.datetime.min
 
+    # Ключи всех броней сервиса, а не только этого процесса. Ту же запись мог
+    # уже подобрать обход журнала (`sync_orphan_bookings`) — если смотреть
+    # только на свои, она добавилась бы вторым разом и уведомление ушло дважды.
     known = {
-        booking.guard_key
-        for booking in db.query(Booking).filter(Booking.job_id == job.id).all()
+        booking.guard_key: booking
+        for booking in db.query(Booking).filter(Booking.service == job.service).all()
     }
 
     created: list[Booking] = []
     for record in guard.records():
-        if record.booking_key in known:
+        existing = known.get(record.booking_key)
+        if existing is not None:
+            # Бронь уже есть. Если она бесхозная и по времени наша — присваиваем
+            # процессу, чтобы в карточке было видно, откуда она взялась.
+            # Повторно не рассылаем: про неё уже сообщили.
+            if existing.job_id is None and _belongs_to(record, started):
+                existing.job_id = job.id
+                db.commit()
             continue
 
-        began = _parse_time(record.started_at)
-        if began is not None and began < started:
+        if not _belongs_to(record, started):
             # Попытка из прошлого запуска — не наша.
             continue
 
@@ -113,6 +125,98 @@ def sync_from_journal(db, job: Job) -> list[Booking]:
     if created:
         db.commit()
     return created
+
+
+def _belongs_to(record, started: dt.datetime) -> bool:
+    """Попытка начата не раньше старта процесса — значит, его."""
+    began = _parse_time(record.started_at)
+    return began is None or began >= started
+
+
+def sync_orphan_bookings(db) -> list[Booking]:
+    """
+    Подобрать из журналов брони, которых панель не видела.
+
+    Такое бывает, когда бота запускали из командной строки или когда процесс
+    удалили раньше, чем панель успела прочитать журнал. Бронь при этом реальна:
+    у перевозчика она есть, счёт выставлен, и ссылка на оплату лежит в журнале.
+    Без этого обхода она пропадала совсем — человек узнавал о ней, только
+    заглянув в JSON руками.
+
+    Возвращает только НОВЫЕ записи: по ним уходит уведомление, и слать его
+    заново при каждом открытии страницы нельзя.
+    """
+    created: list[Booking] = []
+
+    for service in Service:
+        if not journal_path(service.value).exists():
+            continue
+
+        known = {
+            booking.guard_key
+            for booking in db.query(Booking)
+            .filter(Booking.service == service.value)
+            .all()
+        }
+
+        for record in _guard(service.value).records():
+            if record.booking_key in known:
+                continue
+            booking = Booking(
+                job_id=None,
+                service=service.value,
+                status=record.status,
+                guard_key=record.booking_key,
+                booking_number=record.booking_number,
+                payment_url=record.form_url,
+                detail=record.detail,
+            )
+            db.add(booking)
+            created.append(booking)
+
+    if created:
+        db.commit()
+    return created
+
+
+def notify_orphan_bookings(db) -> list[Booking]:
+    """
+    Подобрать бесхозные брони и разослать по ним ссылку на оплату.
+
+    Маршрут и пассажиров взять неоткуда — процесса нет. Пишем то, что есть
+    в журнале: номер брони и ссылку. Этого достаточно, чтобы оплатить.
+    """
+    from web.services.notifications import format_booking_message, notify_booking
+
+    created = sync_orphan_bookings(db)
+    payable = [b for b in created if b.status == DONE and b.payment_url]
+
+    for booking in payable:
+        subject, body, sms = format_booking_message(
+            route=SERVICE_ROUTE_UNKNOWN.get(booking.service, booking.service),
+            payment_url=booking.payment_url,
+            booking_number=booking.booking_number,
+            passengers="",
+        )
+        try:
+            notify_booking(
+                db,
+                subject=subject,
+                body=body,
+                sms_text=sms,
+                booking_id=booking.id,
+            )
+        except Exception as exc:  # noqa: BLE001 — бронь важнее рассылки
+            print(f"[bookings] рассылка по бесхозной броне не удалась: {exc}")
+
+    return created
+
+
+# Маршрут неизвестен: процесса, из которого его можно было бы взять, нет.
+SERVICE_ROUTE_UNKNOWN = {
+    Service.AIRLINES.value: "Самолёты (запуск вне панели)",
+    Service.RAILWAY.value: "Поезда (запуск вне панели)",
+}
 
 
 def blocking_attempt(service: str):

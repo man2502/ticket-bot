@@ -327,9 +327,9 @@ class Job(Base):
     logs: Mapped[list["JobLog"]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )
-    bookings: Mapped[list["Booking"]] = relationship(
-        back_populates="job", cascade="all, delete-orphan"
-    )
+    # Без delete-orphan: удаление процесса не должно стирать бронь. Она есть
+    # у перевозчика, за неё выставлен счёт, и в панели она остаётся без процесса.
+    bookings: Mapped[list["Booking"]] = relationship(back_populates="job")
 
     @property
     def params(self) -> dict[str, Any]:
@@ -395,12 +395,19 @@ class Booking(Base):
     `guard_key` — тот самый ключ из `core.booking_guard`, по которому бот не даёт
     забронировать второй раз. Через него веб показывает, что именно блокирует
     повторный запуск, и по нему же работает кнопка «разблокировать» у админа.
+
+    `job_id` может быть пустым. Бронь существует у перевозчика независимо от
+    того, жив ли поиск, который её создал: бота могли запустить из командной
+    строки, а процесс — удалить уже после брони. Терять из-за этого ссылку
+    на оплату нельзя, поэтому такие брони живут без процесса.
     """
 
     __tablename__ = "bookings"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), index=True)
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="SET NULL"), index=True, nullable=True
+    )
     service: Mapped[str] = mapped_column(String(16))
     # done | unknown | failed — статусы из core.booking_guard.
     status: Mapped[str] = mapped_column(String(16))
@@ -410,7 +417,7 @@ class Booking(Base):
     detail: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
 
-    job: Mapped[Job] = relationship(back_populates="bookings")
+    job: Mapped[Job | None] = relationship(back_populates="bookings")
 
 
 class NotificationLog(Base):

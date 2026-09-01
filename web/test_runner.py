@@ -622,8 +622,32 @@ def test_job_with_booking_can_be_deleted(db) -> None:
     delete_job(db, job)
 
     assert db.get(Job, job.id) is None
-    assert db.query(Booking).count() == 0
     assert db.query(JobLog).count() == 0
+    # Логи процесса уходят вместе с ним, бронь — нет: см. следующий тест.
+    assert db.query(Booking).count() == 1
+
+
+def test_booking_survives_job_deletion(db) -> None:
+    """
+    Бронь существует у перевозчика, и за неё выставлен счёт.
+
+    Раньше она удалялась вместе с поиском — человек убирал из списка
+    отработавший процесс и вместе с ним стирал ссылку на оплату, ничего
+    про это не поняв. Теперь бронь остаётся в разделе «Брони» без процесса.
+    """
+    from web.models import Booking, Job
+    from web.services.runner import delete_job
+
+    job = _make_job(db, "railway")
+    booking = _booking_with_notifications(db, job)
+    payment_url = booking.payment_url
+
+    delete_job(db, job)
+
+    survivor = db.query(Booking).one()
+    assert survivor.job_id is None
+    assert survivor.payment_url == payment_url
+    assert db.get(Job, job.id) is None
 
 
 def test_send_history_survives_job_deletion(db) -> None:
@@ -631,20 +655,23 @@ def test_send_history_survives_job_deletion(db) -> None:
     История отправок переживает процесс намеренно.
 
     Запись «ссылка на оплату ушла на такой-то адрес» ценна сама по себе —
-    особенно если бронь была настоящей и оплаченной.
+    особенно если бронь была настоящей и оплаченной. Связь с бронью при этом
+    сохраняется: бронь тоже переживает удаление процесса.
     """
-    from web.models import NotificationLog
+    from web.models import Booking, NotificationLog
     from web.services.runner import delete_job
 
     job = _make_job(db, "railway")
-    _booking_with_notifications(db, job)
+    booking = _booking_with_notifications(db, job)
+    booking_id = booking.id
 
     delete_job(db, job)
 
     logs = db.query(NotificationLog).all()
     assert len(logs) == 2
-    assert all(log.booking_id is None for log in logs)
+    assert all(log.booking_id == booking_id for log in logs)
     assert {log.recipient for log in logs} == {"boss@example.tm", "+99361234567"}
+    assert db.get(Booking, booking_id) is not None
 
 
 def test_labelled_captcha_survives_job_deletion(db) -> None:

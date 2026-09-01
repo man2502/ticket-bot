@@ -83,6 +83,19 @@ def _on_startup() -> None:
         if fixed:
             print(f"[training] помечено остановленными после перезапуска: {fixed}")
 
+    # Брони, о которых панель не знает: бота могли запустить из командной строки
+    # или панель упала между POST и чтением журнала. Ссылка на оплату лежит
+    # в журнале бота, и без этого обхода про неё никто бы не узнал.
+    from web.services.bookings import notify_orphan_bookings
+
+    try:
+        with session_scope() as session:
+            picked = notify_orphan_bookings(session)
+            if picked:
+                print(f"[bookings] подобрано из журналов: {len(picked)}")
+    except Exception as exc:  # noqa: BLE001 — панель обязана подняться
+        print(f"[bookings] обход журналов пропущен: {exc}")
+
 
 @app.on_event("shutdown")
 def _on_shutdown() -> None:

@@ -18,6 +18,8 @@ from web.services.bookings import (
     STATUS_TITLES,
     blocking_attempt,
     journal_path,
+    SERVICE_ROUTE_UNKNOWN,
+    notify_orphan_bookings,
     unblock_service,
 )
 from web.services.notifications import format_booking_message, notify_booking
@@ -39,7 +41,17 @@ def _page(
     message: str | None = None,
     is_error: bool = False,
 ) -> HTMLResponse:
-    query = db.query(Booking).join(Job, Booking.job_id == Job.id)
+    # Заодно подбираем брони, о которых панель не знала: бота могли запустить
+    # из командной строки. Чтение двух небольших JSON — дешевле, чем потерянная
+    # ссылка на оплату.
+    try:
+        notify_orphan_bookings(db)
+    except Exception as exc:  # noqa: BLE001 — страница обязана открыться
+        print(f"[bookings] обход журналов пропущен: {exc}")
+
+    # Бесхозные брони (процесс удалён или запуск был вне панели) видит только
+    # админ: понять, чьи они, неоткуда.
+    query = db.query(Booking).outerjoin(Job, Booking.job_id == Job.id)
     if not user.is_admin:
         query = query.filter(Job.user_id == user.id)
     bookings = query.order_by(Booking.created_at.desc()).limit(100).all()
@@ -124,26 +136,39 @@ def resend(
     if booking is None:
         return RedirectResponse("/bookings", status_code=status.HTTP_303_SEE_OTHER)
 
-    job = db.get(Job, booking.job_id)
-    if job is None or (not user.is_admin and job.user_id != user.id):
+    job = db.get(Job, booking.job_id) if booking.job_id else None
+    # Бронь без процесса — законный случай: запуск из командной строки или
+    # удалённый поиск. Разослать её может админ, обычному человеку неоткуда
+    # знать, его она или чужая.
+    if job is None:
+        if not user.is_admin:
+            return RedirectResponse("/bookings", status_code=status.HTTP_303_SEE_OTHER)
+    elif not user.is_admin and job.user_id != user.id:
         return RedirectResponse("/bookings", status_code=status.HTTP_303_SEE_OTHER)
 
     if not booking.payment_url:
         return _page(request, user, db, is_error=True, message="У этой брони нет ссылки на оплату")
 
-    names = ", ".join(
-        f"{link.passenger.last_name} {link.passenger.first_name}"
-        for link in sorted(job.passengers, key=lambda x: x.position)
-    )
+    if job is None:
+        route = SERVICE_ROUTE_UNKNOWN.get(booking.service, booking.service)
+        names, to_email, to_phone = "", "", ""
+    else:
+        route = f"{job.source} → {job.destination}, {job.depart_date}"
+        names = ", ".join(
+            f"{link.passenger.last_name} {link.passenger.first_name}"
+            for link in sorted(job.passengers, key=lambda x: x.position)
+        )
+        to_email, to_phone = job.notify_email, job.notify_phone
+
     subject, body, sms = format_booking_message(
-        route=f"{job.source} → {job.destination}, {job.depart_date}",
+        route=route,
         payment_url=booking.payment_url,
         booking_number=booking.booking_number,
         passengers=names,
     )
     results = notify_booking(
         db, subject=subject, body=body, sms_text=sms,
-        email=job.notify_email, phone=job.notify_phone, booking_id=booking.id,
+        email=to_email, phone=to_phone, booking_id=booking.id,
     )
 
     if not results:

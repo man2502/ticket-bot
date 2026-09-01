@@ -73,7 +73,15 @@
     {% for b in bookings %}
     <tr>
       <td class="muted small">{{ b.created_at.strftime('%d.%m %H:%M') }}</td>
-      <td><a href="/jobs/{{ b.job_id }}">#{{ b.job_id }}</a></td>
+      <td>
+        {# Бронь без процесса: запуск из командной строки или поиск удалили.
+           Сама бронь при этом настоящая — ссылка на оплату ниже рабочая. #}
+        {% if b.job_id %}
+          <a href="/jobs/{{ b.job_id }}">#{{ b.job_id }}</a>
+        {% else %}
+          <span class="muted small" title="Запуск вне панели или поиск удалён">без процесса</span>
+        {% endif %}
+      </td>
       <td class="small">{{ service_titles.get(b.service, b.service) }}</td>
       <td>
         <span class="tag {{ 'tag-ok' if b.status == 'done' else ('tag-error' if b.status in ('unknown', 'pending') else '') }}">
