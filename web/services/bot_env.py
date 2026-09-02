@@ -204,8 +204,11 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
 
     if params.get("flight_time"):
         values["FLIGHT_TIME"] = params["flight_time"]
-    else:
-        values["FLIGHT_INDEX"] = params.get("flight_index") or "1"
+    elif params.get("flight_index"):
+        values["FLIGHT_INDEX"] = params["flight_index"]
+    # Ни то ни другое не задано — переменную не передаём вовсе. Для бота это
+    # «рейс не выбран»: он смотрит все прямые рейсы с местами, как railway
+    # с пустым выбором поезда.
 
     return values
 

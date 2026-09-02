@@ -235,7 +235,9 @@ def _collect_params(service: str, raw) -> dict:
         }
 
     return {
-        "flight_index": str(raw.get("flight_index", "")).strip() or "1",
+        # Пусто = рейс не выбран, бот проверит все. Раньше подставлялась
+        # единица, и «любой рейс» выразить было нельзя вовсе.
+        "flight_index": str(raw.get("flight_index", "")).strip(),
         "flight_time": str(raw.get("flight_time", "")).strip(),
         "strict": strict,
     }

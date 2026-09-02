@@ -176,12 +176,21 @@ def _no_flights_on_date_msg(detail: str = "") -> str:
     return text
 
 
-def pick_flight_offer(offers: list[FlightOffer]) -> tuple[FlightOffer | None, str | None]:
+def flight_candidates(offers: list[FlightOffer]) -> tuple[list[FlightOffer], str | None]:
     """
-    Выбор рейса по FLIGHT_INDEX / FLIGHT_TIME / FLIGHT_STRICT — как в steps.py.
+    Рейсы для брони, по порядку попыток. Пустой список — вторым значением причина.
+
+    Разбор настроек тот же, что был: FLIGHT_INDEX / FLIGHT_TIME / FLIGHT_STRICT.
+    Изменилось одно — возвращается СПИСОК, а не единственный рейс. Если бронь
+    на первом достоверно не удалась, бот пробует следующий, как это давно
+    делает railway. Раньше он сдавался и ждал следующего слота, хотя рядом
+    в том же ответе были другие рейсы с местами.
+
+    Пустой FLIGHT_INDEX означает «рейс не выбран» — тогда кандидаты это все
+    прямые рейсы с местами, по порядку вылета.
     """
     if not offers:
-        return None, _no_flights_on_date_msg("selectedDate пуст")
+        return [], _no_flights_on_date_msg("selectedDate пуст")
 
     strict = flight_strict()
     want_idxs = flight_want_indexes()
@@ -193,12 +202,12 @@ def pick_flight_offer(offers: list[FlightOffer]) -> tuple[FlightOffer | None, st
         search_pool = offers if strict else selectable
         matches = [o for o in search_pool if _flight_has_time(o, prefer_time)]
         if matches:
-            pick = matches[0]
-            if not _flight_selectable(pick):
-                return None, f"strict: рейс {prefer_time} без мест или транзит"
-            return pick, None
+            usable = [o for o in matches if _flight_selectable(o)]
+            if not usable:
+                return [], f"strict: рейс {prefer_time} без мест или транзит"
+            return usable, None
         if strict:
-            return None, f"strict: время {prefer_time} не найдено среди {len(offers)} рейсов"
+            return [], f"strict: время {prefer_time} не найдено среди {len(offers)} рейсов"
         # не strict — fallback на index ниже
 
     preferred: list[FlightOffer] = []
@@ -217,15 +226,25 @@ def pick_flight_offer(offers: list[FlightOffer]) -> tuple[FlightOffer | None, st
         preferred.append(pick)
 
     if preferred:
-        return preferred[0], None
+        if strict:
+            return preferred, None
+        # Выбранные первыми, остальные с местами — следом, на случай отказа.
+        rest = [o for o in selectable if o not in preferred]
+        return preferred + rest, None
 
-    if strict:
+    if strict and want_idxs:
         detail = " ".join(preferred_errors) or "нет совпадений"
-        return None, f"strict: FLIGHT_INDEX={idx_label} — {detail}"
+        return [], f"strict: FLIGHT_INDEX={idx_label} — {detail}"
 
     if not selectable:
-        return None, "нет доступных рейсов (места=0 или транзит)"
-    return selectable[0], None
+        return [], "нет доступных рейсов (места=0 или транзит)"
+    return selectable, None
+
+
+def pick_flight_offer(offers: list[FlightOffer]) -> tuple[FlightOffer | None, str | None]:
+    """Первый кандидат — для показа в логе и совместимости со старым кодом."""
+    candidates, err = flight_candidates(offers)
+    return (candidates[0] if candidates else None), err
 
 
 def count_direct_flights(body: dict[str, Any] | str) -> tuple[int, list[str]] | None:
@@ -819,38 +838,78 @@ def try_auto_book(
     verbose: bool = True,
 ) -> BookingResult:
     """
-    Полный цикл автоброни: выбрать рейс → собрать payload → POST под защитой журнала.
+    Автобронь по всем подходящим рейсам, по очереди.
 
-    Возврат читать через `result.ok` / `result.unknown`, а НЕ через `not ok`:
-    неопределённый результат означает «остановись», а не «пробуй дальше».
+    Переход к следующему рейсу разрешён ТОЛЬКО после достоверного отказа
+    («сервер сказал нет», «payload не собрался»). Любая неясность — потерянный
+    ответ, необработанное исключение — означает, что бронь могла быть создана,
+    и перебор немедленно останавливается. Ровно так же устроен railway.
+
+    Возврат читать через `result.ok` / `result.unknown`, а НЕ через `not ok`.
     """
     info = parse_availability(availability_body)
-    if not info or not info.picked:
-        err = "не удалось разобрать searchKey/рейсы"
-        if info and info.flights:
-            _, pick_err = pick_flight_offer(info.flights)
-            if pick_err:
-                err = pick_err
+    if not info:
         # Ничего не отправляли — брони точно нет.
-        return BookingResult(ok=False, error=err)
+        return BookingResult(ok=False, error="не удалось разобрать searchKey/рейсы")
 
-    flight = info.picked
+    candidates, err = flight_candidates(info.flights)
+    if not candidates:
+        return BookingResult(ok=False, error=err or "нет подходящих рейсов")
+
     passengers = get_passengers(verbose=False)
-    payload = build_create_booking_payload(info, flight, passengers=passengers)
+    guard = guard or BookingGuard(BOOKINGS_JOURNAL)
 
-    # Проверяем ДО записи в журнал и до POST: запрос с пустым обязательным полем
-    # сервер отвергнет, а слот будет потрачен. Брони при этом точно нет —
-    # значит это достоверный отказ, поиск может продолжаться.
-    missing = missing_booking_fields(payload)
+    # Пассажиры и контакты одинаковы для всех рейсов: проверяем один раз.
+    # Гонять цикл по рейсам с незаполненным паспортом бессмысленно — откажут
+    # на каждом, а слот будет потрачен целиком.
+    missing = missing_booking_fields(
+        build_create_booking_payload(info, candidates[0], passengers=passengers)
+    )
     if missing:
         return BookingResult(
             ok=False,
-            flight=flight,
+            flight=candidates[0],
             error=f"нечем бронировать, не заполнено: {', '.join(missing)}",
         )
 
+    last: BookingResult | None = None
+    for position, flight in enumerate(candidates, start=1):
+        if verbose and len(candidates) > 1:
+            print(
+                f"[book-api] рейс {position}/{len(candidates)}: "
+                f"{flight.flight_number or '?'} {flight.departure_time or ''}".rstrip()
+            )
+        result = _book_one_flight(
+            info,
+            flight,
+            passengers,
+            headers=headers,
+            route_line=route_line,
+            guard=guard,
+            verbose=verbose,
+        )
+        last = result
+        if result.ok or result.unknown:
+            return result
+        if verbose and position < len(candidates):
+            print(f"[book-api] {result.error} — пробую следующий рейс")
+
+    return last or BookingResult(ok=False, error="нет подходящих рейсов")
+
+
+def _book_one_flight(
+    info: AvailabilityInfo,
+    flight: FlightOffer,
+    passengers: list[dict],
+    *,
+    headers: dict[str, str],
+    route_line: str,
+    guard: BookingGuard,
+    verbose: bool = True,
+) -> BookingResult:
+    """Одна попытка брони под защитой журнала: payload → POST → разбор ответа."""
+    payload = build_create_booking_payload(info, flight, passengers=passengers)
     key = compute_booking_key(info, flight, passengers)
-    guard = guard or BookingGuard(BOOKINGS_JOURNAL)
 
     previous = guard.get(key)
     if previous is not None and guard.is_settled(key):

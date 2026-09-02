@@ -39,8 +39,14 @@ def flight_prefer_time() -> str:
 
 
 def flight_want_indexes() -> list[int]:
-    """FLIGHT_INDEX: 1 = [1], 4,3 = [4] затем [3] — как TRAIN_INDEX в railway."""
-    return parse_flight_indexes(_env("FLIGHT_INDEX", "1"))
+    """
+    FLIGHT_INDEX: 1 = [1], 4,3 = [4] затем [3] — как TRAIN_INDEX в railway.
+
+    Пусто = рейс не выбран, смотрим все. Так же ведёт себя railway с пустым
+    TRAIN_INDEX, и разное поведение двух ботов на одинаково пустой настройке
+    было бы неожиданностью.
+    """
+    return parse_flight_indexes(_env("FLIGHT_INDEX"), default="")
 
 
 def flight_selection_label(*, fallback_hint: str = "другие прямые с местами") -> str:
@@ -52,22 +58,29 @@ def flight_selection_label(*, fallback_hint: str = "другие прямые с
     """
     strict = flight_strict()
     prefer_time = flight_prefer_time()
-    want_idx = format_flight_indexes(flight_want_indexes())
+    want = flight_want_indexes()
     mode = "строго (только указанные рейсы)" if strict else "с запасным выбором"
     if prefer_time:
         scope = "среди всех рейсов" if strict else "среди доступных"
         return f"{mode}, время={prefer_time}, {scope}"
+    if not want:
+        return "любой — все прямые рейсы с местами, по порядку вылета"
+    want_idx = format_flight_indexes(want)
     if strict:
         return f"{mode}, index={want_idx} (только эти позиции в списке)"
     return f"{mode}, index={want_idx} (сначала эти, иначе {fallback_hint})"
 
 
 def parse_flight_indexes(raw: str | None, *, default: str = "1") -> list[int]:
-    """FLIGHT_INDEX: 1 = первый рейс, 4,3 = [4] затем [3]. Нумерация с 1."""
+    """
+    FLIGHT_INDEX: 1 = первый рейс, 4,3 = [4] затем [3]. Нумерация с 1.
+
+    Пустой список — законный ответ: он означает «рейс не выбран, смотрим все».
+    """
     text = (raw if raw is not None else default).strip() or default
     parts = [p.strip() for p in text.replace(";", ",").split(",") if p.strip()]
     if not parts:
-        parts = [default]
+        return []
     out: list[int] = []
     seen: set[int] = set()
     for part in parts:
@@ -86,8 +99,9 @@ def parse_flight_indexes(raw: str | None, *, default: str = "1") -> list[int]:
 
 
 def parse_flight_index(raw: str | None, *, default: str = "1") -> int:
-    """Первый индекс из FLIGHT_INDEX (для совместимости)."""
-    return parse_flight_indexes(raw, default=default)[0]
+    """Первый индекс из FLIGHT_INDEX. Ничего не выбрано — первый по списку."""
+    indexes = parse_flight_indexes(raw, default=default)
+    return indexes[0] if indexes else 1
 
 
 def format_flight_indexes(user_indexes: list[int]) -> str:

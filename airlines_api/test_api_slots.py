@@ -557,3 +557,218 @@ def test_booking_is_refused_before_the_request(monkeypatch: pytest.MonkeyPatch) 
     assert result.ok is False
     assert result.unknown is False, "брони нет — это достоверный отказ"
     assert "email" in result.error
+
+
+# --------------------------------------------------------------------------
+# Выбор рейса: «любой» и перебор всех
+# --------------------------------------------------------------------------
+
+
+def _flight(index: int, number: str, time: str, *, seat: int = 1, skipped: bool = False):
+    return api_booking.FlightOffer(
+        raw={"n": number}, summary=f"{number} {time}", search_id=index + 1,
+        booking_class_id=1, departure_time=time, flight_number=number,
+        seat=seat, list_index=index, skipped=skipped,
+    )
+
+
+@pytest.fixture()
+def flight_offers():
+    """Два рейса с местами и один без — как в реальном ответе."""
+    return [
+        _flight(0, "127", "06:30"),
+        _flight(1, "131", "18:35"),
+        _flight(2, "909", "21:00", seat=0),
+    ]
+
+
+@pytest.fixture(autouse=True)
+def _clean_flight_env(monkeypatch: pytest.MonkeyPatch):
+    for name in ("FLIGHT_INDEX", "FLIGHT_TIME", "FLIGHT_STRICT"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_no_selection_means_all_flights(flight_offers) -> None:
+    """
+    Рейс не выбран — смотрим все с местами, по порядку вылета.
+
+    Раньше пустое поле молча означало «первый», и выразить «любой» было нельзя:
+    бот пробовал один рейс и ждал следующего слота, хотя рядом в том же ответе
+    был другой с местами.
+    """
+    candidates, err = api_booking.flight_candidates(flight_offers)
+    assert err is None
+    assert [o.flight_number for o in candidates] == ["127", "131"]
+
+
+def test_flights_without_seats_are_skipped(flight_offers) -> None:
+    candidates, _err = api_booking.flight_candidates(flight_offers)
+    assert "909" not in [o.flight_number for o in candidates]
+
+
+def test_transit_flights_are_skipped() -> None:
+    """Транзитные рейсы не берём: бот ищет прямые."""
+    flights = [_flight(0, "127", "06:30", skipped=True), _flight(1, "131", "18:35")]
+    candidates, _err = api_booking.flight_candidates(flights)
+    assert [o.flight_number for o in candidates] == ["131"]
+
+
+def test_chosen_flight_goes_first_others_follow(flight_offers, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Выбранный рейс первым, остальные — на случай отказа."""
+    monkeypatch.setenv("FLIGHT_INDEX", "2")
+    candidates, _err = api_booking.flight_candidates(flight_offers)
+    assert [o.flight_number for o in candidates] == ["131", "127"]
+
+
+def test_strict_keeps_only_the_chosen(flight_offers, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FLIGHT_INDEX", "2")
+    monkeypatch.setenv("FLIGHT_STRICT", "1")
+    candidates, _err = api_booking.flight_candidates(flight_offers)
+    assert [o.flight_number for o in candidates] == ["131"]
+
+
+def test_chosen_without_seats_falls_back(flight_offers, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FLIGHT_INDEX", "3")  # рейс 909, мест нет
+    candidates, _err = api_booking.flight_candidates(flight_offers)
+    assert [o.flight_number for o in candidates] == ["127", "131"]
+
+
+def test_strict_without_seats_books_nothing(flight_offers, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FLIGHT_INDEX", "3")
+    monkeypatch.setenv("FLIGHT_STRICT", "1")
+    candidates, err = api_booking.flight_candidates(flight_offers)
+    assert candidates == []
+    assert "strict" in err
+
+
+def test_time_selects_one_flight(flight_offers, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FLIGHT_TIME", "18:35")
+    candidates, _err = api_booking.flight_candidates(flight_offers)
+    assert [o.flight_number for o in candidates] == ["131"]
+
+
+def test_empty_list_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    candidates, err = api_booking.flight_candidates([])
+    assert candidates == []
+    assert err
+
+
+def test_pick_returns_the_first_candidate(flight_offers) -> None:
+    """Старая функция должна остаться совместимой: она даёт первого кандидата."""
+    pick, err = api_booking.pick_flight_offer(flight_offers)
+    assert err is None
+    assert pick.flight_number == "127"
+
+
+# --------------------------------------------------------------------------
+# Перебор рейсов при броне
+# --------------------------------------------------------------------------
+
+
+def _book_env(monkeypatch: pytest.MonkeyPatch, tmp_path, results):
+    """Подменить бронирование одного рейса заранее заданными исходами."""
+    calls = []
+
+    def fake(info, flight, passengers, **kwargs):
+        calls.append(flight.flight_number)
+        return results[len(calls) - 1]
+
+    monkeypatch.setattr(api_booking, "_book_one_flight", fake)
+    monkeypatch.setattr(api_booking, "get_passengers", lambda **k: [{"type": "adult"}])
+    monkeypatch.setattr(api_booking, "missing_booking_fields", lambda payload: [])
+    monkeypatch.setattr(api_booking, "build_create_booking_payload", lambda *a, **k: {})
+    return calls
+
+
+def _availability(monkeypatch: pytest.MonkeyPatch, flight_offers):
+    monkeypatch.setattr(
+        api_booking,
+        "parse_availability",
+        lambda body: api_booking.AvailabilityInfo(
+            search_key="OW_1", flights=flight_offers, picked=flight_offers[0]
+        ),
+    )
+
+
+def test_certain_failure_moves_to_the_next_flight(
+    flight_offers, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Сервер достоверно отказал — брони нет, соседний рейс пробовать можно."""
+    _availability(monkeypatch, flight_offers)
+    calls = _book_env(
+        monkeypatch, tmp_path,
+        [
+            api_booking.BookingResult(ok=False, error="мест нет"),
+            api_booking.BookingResult(ok=True, pnr="46MEMB"),
+        ],
+    )
+
+    result = api_booking.try_auto_book({}, headers={}, route_line="ASB → MYP", verbose=False)
+
+    assert calls == ["127", "131"]
+    assert result.ok is True
+
+
+def test_unknown_result_stops_the_loop(
+    flight_offers, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """
+    Ответ потерян — бронь могла быть создана. Идти к следующему рейсу значит
+    рискнуть вторым счётом на тех же пассажиров.
+    """
+    _availability(monkeypatch, flight_offers)
+    calls = _book_env(
+        monkeypatch, tmp_path,
+        [
+            api_booking.BookingResult(ok=False, unknown=True, error="ответ потерян"),
+            api_booking.BookingResult(ok=True, pnr="НЕ ДОЛЖНО СЛУЧИТЬСЯ"),
+        ],
+    )
+
+    result = api_booking.try_auto_book({}, headers={}, route_line="ASB → MYP", verbose=False)
+
+    assert calls == ["127"], "после неопределённого результата перебор обязан встать"
+    assert result.unknown is True
+
+
+def test_all_flights_refused_returns_the_last_error(
+    flight_offers, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _availability(monkeypatch, flight_offers)
+    calls = _book_env(
+        monkeypatch, tmp_path,
+        [
+            api_booking.BookingResult(ok=False, error="мест нет"),
+            api_booking.BookingResult(ok=False, error="рейс закрыт"),
+        ],
+    )
+
+    result = api_booking.try_auto_book({}, headers={}, route_line="ASB → MYP", verbose=False)
+
+    assert calls == ["127", "131"]
+    assert result.ok is False and result.unknown is False
+    assert "рейс закрыт" in result.error
+
+
+def test_bad_passenger_data_stops_before_any_request(
+    flight_offers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Незаполненный паспорт одинаков для всех рейсов. Гонять по ним цикл значит
+    потратить слот на заведомо обречённые запросы.
+    """
+    _availability(monkeypatch, flight_offers)
+    sent = []
+    monkeypatch.setattr(
+        api_booking, "_book_one_flight", lambda *a, **k: sent.append(1)
+    )
+    monkeypatch.setattr(api_booking, "get_passengers", lambda **k: [{"type": "adult"}])
+    monkeypatch.setattr(api_booking, "build_create_booking_payload", lambda *a, **k: {})
+    monkeypatch.setattr(
+        api_booking, "missing_booking_fields", lambda payload: ["email для брони"]
+    )
+
+    result = api_booking.try_auto_book({}, headers={}, route_line="ASB → MYP", verbose=False)
+
+    assert sent == []
+    assert "email" in result.error

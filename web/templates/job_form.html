@@ -124,8 +124,10 @@
   <div class="field-grid">
     <label>
       Номер рейса в списке
-      <input name="flight_index" value="{{ form.flight_index or '1' }}" placeholder="1">
-      <span class="field-hint">1 — первый по времени. Можно несколько: 2,1</span>
+      <input name="flight_index" value="{{ form.flight_index or '' }}" placeholder="1">
+      <span class="field-hint">
+        1 — первый по времени. Можно несколько: 2,1. Пусто — любой
+      </span>
     </label>
 
     <label>

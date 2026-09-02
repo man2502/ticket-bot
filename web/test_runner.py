@@ -803,3 +803,30 @@ def test_railway_needs_no_contact(db) -> None:
 
     save_settings(db, {"default_notify_email": ""})
     assert _missing_booking_contact(db, _make_job(db, "railway")) == ""
+
+
+def test_empty_flight_choice_means_any(db) -> None:
+    """
+    Пустое поле «Номер рейса» = любой рейс. Раньше панель подставляла единицу,
+    и выразить «смотри все» было нельзя вовсе.
+    """
+    from web.services.bot_env import prepare_launch
+
+    job = _make_job(db, "airlines")
+    job.params = {}
+    db.commit()
+
+    values = _env_values(prepare_launch(db, job).env_file)
+    assert "FLIGHT_INDEX" not in values
+    assert "FLIGHT_TIME" not in values
+
+
+def test_flight_choice_reaches_the_bot(db) -> None:
+    from web.services.bot_env import prepare_launch
+
+    job = _make_job(db, "airlines")
+    job.params = {"flight_index": "2,1"}
+    db.commit()
+
+    values = _env_values(prepare_launch(db, job).env_file)
+    assert values["FLIGHT_INDEX"] == "2,1"
