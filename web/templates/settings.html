@@ -180,20 +180,9 @@
                       'Не тот, которым вы входите в приложение') }}
     </div>
 
-    <h3>2. Ваш аккаунт T5</h3>
     <p class="muted small">
-      Те же телефон и пароль, которыми <strong>вы входите в приложение</strong>.
-      Именно на этот аккаунт запишется бронь и придёт счёт.
-    </p>
-    <div class="field-grid">
-      {{ text_field('login', 'Телефон', svc.login, 'Например: +99361234567') }}
-      {{ secret_field('password', 'Пароль', svc.password_set,
-                      'Ваш пароль от личного кабинета T5') }}
-    </div>
-
-    <p class="muted small">
-      По этим четырём полям бот сам получает оба токена и обновляет их,
-      когда те протухают — вводить токены вручную не нужно.
+      Телефоны и пароли личных кабинетов — ниже, в списке аккаунтов. Их может
+      быть несколько: каждый процесс самолётов идёт от своего аккаунта.
     </p>
     {% else %}
     <p class="muted small">Авторизация не требуется — API открытый.</p>
@@ -219,6 +208,10 @@
       {{ text_field('rate_limit_pause_sec', 'Пауза после 429, сек', svc.rate_limit_pause_sec, 'Не меньше 30') }}
       {{ text_field('repeated_error_pause_after', 'Пауза после N одинаковых ошибок',
                     svc.repeated_error_pause_after) }}
+      {% if svc.needs_auth %}
+      {{ text_field('max_parallel', 'Процессов одновременно', svc.max_parallel,
+                    'Все аккаунты ходят с одного адреса — сайт режет по адресу') }}
+      {% endif %}
     </div>
 
     {% if svc.has_captcha %}
@@ -249,6 +242,75 @@
       <button type="submit">Сохранить</button>
     </div>
   </form>
+
+  {% if svc.needs_auth %}
+  {# Аккаунты — отдельными формами: вложенные формы HTML не допускает, а общая
+     форма заставила бы сохранять все аккаунты разом ради правки одного. #}
+  <h3 id="providers">2. Аккаунты T5</h3>
+  <p class="muted small">
+    Телефон и пароль, которыми входят в приложение. <strong>На этот аккаунт
+    запишется бронь и придёт счёт.</strong> Каждый процесс самолётов идёт от
+    своего аккаунта, поэтому их число — это сколько поисков может идти сразу.
+    Бот сам получает и обновляет токены, вводить их не нужно.
+  </p>
+  <p class="muted small">
+    Отметки проверок разносятся автоматически, чтобы аккаунты не били в сайт
+    в одну и ту же секунду. Задайте секунду вручную, только если знаете зачем.
+  </p>
+
+  {% for p in svc.providers %}
+  <form method="post" action="/settings/providers/{{ p.id }}" class="provider-card">
+    <div class="page-head">
+      <strong>{{ p.title }}</strong>
+      <span class="tag {{ p.tone }}">
+        {% if p.busy_job %}<a href="/jobs/{{ p.busy_job }}">{{ p.state }}</a>{% else %}{{ p.state }}{% endif %}
+      </span>
+    </div>
+    <div class="field-grid">
+      {{ text_field('name', 'Название', p.name, 'Для себя: «Мой», «Рабочий»') }}
+      {{ text_field('login', 'Телефон', p.login, 'Например: +99361234567') }}
+      {{ secret_field('password', 'Пароль', p.password_set, 'От личного кабинета T5') }}
+      {{ text_field('check_at_second', 'Секунда отметки', p.check_at_second_raw,
+                    ('Пусто — авто, сейчас :%02d' % p.slot_second) if p.slot_auto
+                    else ('Вручную, :%02d' % p.slot_second)) }}
+    </div>
+    <label class="checkbox">
+      <input type="checkbox" name="is_enabled" {% if p.is_enabled %}checked{% endif %}>
+      Аккаунт включён
+    </label>
+    <div class="form-actions">
+      <button type="submit">Сохранить</button>
+      <button type="submit" class="secondary-btn"
+              formaction="/settings/providers/{{ p.id }}/delete"
+              onclick="return confirm('Удалить этот аккаунт? Брони в панели останутся.')">
+        Удалить
+      </button>
+    </div>
+  </form>
+  {% else %}
+  <div class="alert error">
+    Нет ни одного аккаунта — процессы самолётов запускать не от кого.
+  </div>
+  {% endfor %}
+
+  <form method="post" action="/settings/providers" class="provider-card provider-new">
+    <strong>Добавить аккаунт</strong>
+    <div class="field-grid">
+      {{ text_field('name', 'Название', '', 'Для себя: «Мой», «Рабочий»') }}
+      {{ text_field('login', 'Телефон', '', 'Например: +99361234567') }}
+      <label>
+        Пароль
+        <input name="password" type="password" autocomplete="new-password">
+        <span class="field-hint">От личного кабинета T5</span>
+      </label>
+      {{ text_field('check_at_second', 'Секунда отметки', '', 'Пусто — авто') }}
+    </div>
+    <input type="hidden" name="is_enabled" value="1">
+    <div class="form-actions">
+      <button type="submit">Добавить</button>
+    </div>
+  </form>
+  {% endif %}
 </section>
 {% endfor %}
 

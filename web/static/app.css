@@ -495,3 +495,16 @@ code {
 .inline-form input.narrow { width: 80px; }
 .alert .inline-form { margin-top: 10px; }
 .alert .inline-label { color: inherit; }
+
+/* --------------------------------------------------- аккаунты перевозчика */
+
+.provider-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px 0;
+  background: var(--surface-2);
+}
+.provider-card .page-head { margin-bottom: 8px; }
+.provider-card .tag a { color: inherit; }
+.provider-new { border-style: dashed; background: transparent; }

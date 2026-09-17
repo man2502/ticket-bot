@@ -21,6 +21,13 @@ from web.services.notifications import (
     sms_configured,
     smtp_configured,
 )
+from web.services.providers import (
+    ProviderError,
+    delete_provider,
+    get_provider,
+    providers_view,
+    save_provider,
+)
 from web.services.settings import (
     get_all,
     get_setting,
@@ -66,6 +73,7 @@ def _page(
         # Авторизации у railway нет — API открытый, полям доступа взяться неоткуда.
         view["needs_auth"] = service == Service.AIRLINES
         view["has_captcha"] = service == Service.AIRLINES
+        view["providers"] = providers_view(db, service.value) if view["needs_auth"] else []
         services.append(view)
 
     return render(
@@ -216,11 +224,13 @@ async def save_service(
         return RedirectResponse("/settings", status_code=status.HTTP_303_SEE_OTHER)
 
     raw = await request.form()
+    # Телефона и пароля личного кабинета в этой форме больше нет — они
+    # у аккаунтов (провайдеров) ниже. Не передаём их, чтобы сохранение
+    # остальных настроек не затирало старые значения пустыми.
     data: dict[str, object] = {
-        "login": str(raw.get("login", "")),
         "extra_login": str(raw.get("extra_login", "")),
-        "password_enc": str(raw.get("password", "")),
         "extra_password_enc": str(raw.get("extra_password", "")),
+        "max_parallel": str(raw.get("max_parallel", "2")),
         "check_period_sec": str(raw.get("check_period_sec", "30")),
         "check_at_second": str(raw.get("check_at_second", "0")),
         "max_searches_per_hour": str(raw.get("max_searches_per_hour", "0")),
@@ -235,3 +245,73 @@ async def save_service(
 
     save_service_config(db, service, data)
     return _page(request, user, db, message=f"{SERVICE_TITLES[service]}: настройки сохранены")
+
+
+# --------------------------------------------------------------------------- #
+# Аккаунты перевозчика
+# --------------------------------------------------------------------------- #
+
+
+async def _provider_form(request: Request) -> dict[str, object]:
+    raw = await request.form()
+    return {
+        "name": str(raw.get("name", "")),
+        "login": str(raw.get("login", "")),
+        "password": str(raw.get("password", "")),
+        "check_at_second": str(raw.get("check_at_second", "")),
+        # Флажок приходит в форме, только если отмечен.
+        "is_enabled": "is_enabled" in raw,
+    }
+
+
+@router.post("/providers")
+async def create_provider(
+    request: Request,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    data = await _provider_form(request)
+    if not str(data["login"]).strip():
+        return _page(request, user, db, is_error=True,
+                     message="Укажите телефон аккаунта T5")
+    if not str(data["password"]).strip():
+        return _page(request, user, db, is_error=True,
+                     message="Укажите пароль аккаунта T5")
+    provider = save_provider(db, None, data)
+    return _page(request, user, db, message=f"Аккаунт «{provider.title}» добавлен")
+
+
+@router.post("/providers/{provider_id}")
+async def update_provider(
+    provider_id: int,
+    request: Request,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    provider = get_provider(db, provider_id)
+    if provider is None:
+        return _page(request, user, db, is_error=True, message="Аккаунт не найден")
+    data = await _provider_form(request)
+    provider = save_provider(db, provider, data)
+    # Работающий процесс свой check.env уже прочитал — правка подействует
+    # со следующего запуска. Говорим об этом, чтобы не ждали эффекта сразу.
+    return _page(request, user, db,
+                 message=f"Аккаунт «{provider.title}» сохранён. Работающие процессы "
+                         f"подхватят изменения после перезапуска.")
+
+
+@router.post("/providers/{provider_id}/delete")
+def remove_provider(
+    provider_id: int,
+    request: Request,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    provider = get_provider(db, provider_id)
+    if provider is None:
+        return _page(request, user, db, is_error=True, message="Аккаунт не найден")
+    try:
+        result = delete_provider(db, provider)
+    except ProviderError as exc:
+        return _page(request, user, db, is_error=True, message=str(exc))
+    return _page(request, user, db, message=result)

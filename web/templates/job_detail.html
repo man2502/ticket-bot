@@ -44,8 +44,14 @@
 
 {% if busy_with and busy_with != job.id %}
   <div class="alert info">
-    По этому сервису работает <a href="/jobs/{{ busy_with }}">процесс #{{ busy_with }}</a> —
-    запустить второй нельзя.
+    {% if job.service == 'airlines' %}
+      Свободных аккаунтов нет — работает, например,
+      <a href="/jobs/{{ busy_with }}">процесс #{{ busy_with }}</a>.
+      Запустить можно, когда один из процессов завершится.
+    {% else %}
+      По этому сервису работает <a href="/jobs/{{ busy_with }}">процесс #{{ busy_with }}</a> —
+      запустить второй нельзя.
+    {% endif %}
   </div>
 {% endif %}
 
@@ -57,6 +63,15 @@
         <tr><th>Сервис</th><td>{{ service_title }}</td></tr>
         <tr><th>Маршрут</th><td>{{ stations.source }} → {{ stations.destination }}</td></tr>
         <tr><th>Дата</th><td>{{ job.depart_date }}</td></tr>
+        {% if job.service == 'airlines' %}
+        <tr>
+          <th>Аккаунт</th>
+          <td>
+            {% if job.provider %}{{ job.provider.title }}{% else %}<span class="muted">назначится при запуске</span>{% endif %}
+            {% if not job.params.get('provider') %}<span class="muted small">(любой свободный)</span>{% endif %}
+          </td>
+        </tr>
+        {% endif %}
         <tr>
           <th>Пассажиры</th>
           <td>
@@ -66,7 +81,8 @@
           </td>
         </tr>
         {% for key, value in job.params.items() %}
-          {% if value not in ('', None, False) %}
+          {# Аккаунт показан отдельной строкой выше — голый id тут ни к чему. #}
+          {% if value not in ('', None, False) and key != 'provider' %}
           <tr><th class="small">{{ key }}</th><td class="small">{{ value }}</td></tr>
           {% endif %}
         {% endfor %}

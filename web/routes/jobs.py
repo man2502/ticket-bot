@@ -27,6 +27,13 @@ from web.models import (
     User,
 )
 from web.services.passengers import validate_group
+from web.services.providers import (
+    busy_provider_ids,
+    list_providers,
+    provider_missing,
+    providers_view,
+    running_count,
+)
 from web.services.runner import (
     JobStartError,
     active_job_id,
@@ -85,6 +92,32 @@ def _not_found(request: Request, user: User) -> HTMLResponse:
 # --------------------------------------------------------------------------- #
 
 
+def _service_busy_with(db: Session, service: str, *, exclude_job_id: int | None = None):
+    """
+    Процесс, из-за которого новый по этому сервису сейчас не запустить. None — можно.
+
+    У поездов очередь одна на сервис. У самолётов — на аккаунт: занято, только
+    когда свободных аккаунтов не осталось или упёрлись в предел одновременных
+    процессов. Иначе баннер «запустить нельзя» врал бы при двух аккаунтах.
+    """
+    if service != Service.AIRLINES.value:
+        busy = active_job_id(db, service)
+        return busy if busy != exclude_job_id else None
+
+    busy = busy_provider_ids(db, exclude_job_id=exclude_job_id)
+    if not busy:
+        return None
+    config = get_service_config(db, service)
+    at_limit = running_count(db, service, exclude_job_id=exclude_job_id) >= config.max_parallel
+    free = [
+        p for p in list_providers(db, service, enabled_only=True)
+        if p.id not in busy and not provider_missing(p)
+    ]
+    if at_limit or not free:
+        return next(iter(busy.values()))
+    return None
+
+
 @router.get("", response_class=HTMLResponse)
 def list_jobs(
     request: Request,
@@ -100,7 +133,7 @@ def list_jobs(
         jobs=jobs,
         service_titles=SERVICE_TITLES,
         # Заняты ли очереди сервисов — чтобы кнопка «Запустить» не обманывала.
-        busy={s.value: active_job_id(db, s.value) for s in Service},
+        busy={s.value: _service_busy_with(db, s.value) for s in Service},
     )
 
 
@@ -142,6 +175,7 @@ def _new_job_page(
         missing=missing_credentials(db, service),
         auto_book=config.auto_book,
         service_enabled=config.is_enabled,
+        providers=providers_view(db, service) if service == Service.AIRLINES.value else [],
     )
 
 
@@ -234,12 +268,15 @@ def _collect_params(service: str, raw) -> dict:
             "strict": strict,
         }
 
+    provider = str(raw.get("provider", "")).strip()
     return {
         # Пусто = рейс не выбран, бот проверит все. Раньше подставлялась
         # единица, и «любой рейс» выразить было нельзя вовсе.
         "flight_index": str(raw.get("flight_index", "")).strip(),
         "flight_time": str(raw.get("flight_time", "")).strip(),
         "strict": strict,
+        # Пусто = любой свободный аккаунт, выбирается при каждом запуске.
+        "provider": provider if provider.isdigit() else "",
     }
 
 
@@ -276,7 +313,7 @@ def job_detail(
         logs=list(reversed(logs)),
         running=is_running(job.id),
         service_title=SERVICE_TITLES[job.service],
-        busy_with=active_job_id(db, job.service),
+        busy_with=_service_busy_with(db, job.service, exclude_job_id=job.id),
         stations=_station_names(db, job),
     )
 
@@ -323,7 +360,7 @@ def start(
             logs=[],
             running=False,
             service_title=SERVICE_TITLES[job.service],
-            busy_with=active_job_id(db, job.service),
+            busy_with=_service_busy_with(db, job.service, exclude_job_id=job.id),
             stations=_station_names(db, job),
             error=str(exc),
         )

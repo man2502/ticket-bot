@@ -136,6 +136,26 @@
       <span class="field-hint">Заполняйте что-то одно</span>
     </label>
   </div>
+
+  <h2>Аккаунт T5</h2>
+  <div class="field-grid">
+    <label>
+      От чьего аккаунта искать
+      <select name="provider">
+        <option value="">Любой свободный</option>
+        {% for p in providers %}
+          <option value="{{ p.id }}" {% if form.provider == p.id|string %}selected{% endif %}
+                  {% if not p.is_enabled %}disabled{% endif %}>
+            {{ p.title }} — {{ p.state }}
+          </option>
+        {% endfor %}
+      </select>
+      <span class="field-hint">
+        На этот аккаунт запишется бронь и придёт счёт. «Любой» — панель возьмёт
+        первый свободный в момент запуска.
+      </span>
+    </label>
+  </div>
   {% endif %}
 
   <label class="checkbox">

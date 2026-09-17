@@ -45,7 +45,14 @@ __all__ = [
     "provider_slot_second",
     "running_count",
     "seed_from_legacy",
+    "providers_view",
+    "delete_provider",
+    "ProviderError",
 ]
+
+
+class ProviderError(RuntimeError):
+    """Действие с аккаунтом нельзя выполнить — с объяснением для человека."""
 
 LEGACY_PROVIDER_NAME = "Основной аккаунт"
 
@@ -215,6 +222,86 @@ def running_count(db, service: str, *, exclude_job_id: int | None = None) -> int
     if exclude_job_id is not None:
         query = query.filter(Job.id != exclude_job_id)
     return query.count()
+
+
+# --------------------------------------------------------------------------- #
+# Для страницы
+# --------------------------------------------------------------------------- #
+
+
+def providers_view(db, service: str = Service.AIRLINES.value) -> list[dict[str, Any]]:
+    """Аккаунты с состоянием — всё, что нужно форме, без паролей."""
+    from web.services.bookings import provider_blocker
+    from web.services.settings import get_service_config
+
+    config = get_service_config(db, service)
+    busy = busy_provider_ids(db)
+    out: list[dict[str, Any]] = []
+    for provider in list_providers(db, service):
+        blocker = provider_blocker(db, provider.id)
+        missing = provider_missing(provider)
+        second = provider_slot_second(
+            db, provider, period_sec=config.check_period_sec, base_second=config.check_at_second
+        )
+        if not provider.is_enabled:
+            state, tone = "выключен", ""
+        elif missing:
+            state, tone = "не заполнено: " + ", ".join(missing), "tag-error"
+        elif provider.id in busy:
+            state, tone = f"занят процессом #{busy[provider.id]}", "tag-ok"
+        elif blocker is not None:
+            state, tone = f"незакрытая попытка брони ({blocker.record.status})", "tag-error"
+        else:
+            state, tone = "свободен", "tag-ok"
+        out.append(
+            {
+                "id": provider.id,
+                "title": provider.title,
+                "name": provider.name,
+                "login": provider.login,
+                "password_set": bool(provider.password_enc),
+                "is_enabled": provider.is_enabled,
+                # Строкой: 0 — законная секунда, а шаблон пустое `0` не показал бы.
+                "check_at_second_raw": (
+                    "" if provider.check_at_second is None else str(provider.check_at_second)
+                ),
+                "slot_second": second,
+                "slot_auto": provider.check_at_second is None,
+                "busy_job": busy.get(provider.id),
+                "state": state,
+                "tone": tone,
+            }
+        )
+    return out
+
+
+def delete_provider(db, provider: Provider) -> str:
+    """
+    Удалить аккаунт. Отказ — если им что-то пользуется.
+
+    Каталог с журналом НЕ удаляем. Если в журнале была настоящая бронь,
+    её след должен остаться, а панель свои записи о бронях уже хранит в базе.
+    Но аккаунт с незакрытой попыткой удалить нельзя вовсе: панель перестала бы
+    видеть его журнал, блокировка молча исчезла бы, и те же люди ушли бы
+    в бронь на другом аккаунте.
+    """
+    from web.services.bookings import provider_blocker
+
+    busy = busy_provider_ids(db)
+    if provider.id in busy:
+        raise ProviderError(
+            f"Аккаунт «{provider.title}» занят процессом #{busy[provider.id]} — "
+            f"сначала остановите его"
+        )
+    if provider_blocker(db, provider.id) is not None:
+        raise ProviderError(
+            f"В журнале аккаунта «{provider.title}» незакрытая попытка брони. "
+            f"Разберитесь с ней в разделе «Брони» или просто выключите аккаунт."
+        )
+    title = provider.title
+    db.delete(provider)
+    db.commit()
+    return f"Аккаунт «{title}» удалён"
 
 
 # --------------------------------------------------------------------------- #

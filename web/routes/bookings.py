@@ -16,8 +16,7 @@ from web.db import get_db
 from web.models import Booking, Job, NotificationLog, Service, User
 from web.services.bookings import (
     STATUS_TITLES,
-    blocking_attempt,
-    journal_path,
+    blockers as find_blockers,
     booking_message_fields,
     notify_orphan_bookings,
     unblock_service,
@@ -61,17 +60,24 @@ def _page(
         query = query.filter(Job.user_id == user.id)
     bookings = query.order_by(Booking.created_at.desc()).limit(100).all()
 
-    # Что сейчас мешает запустить новый поиск по каждому сервису.
+    # Незакрытые попытки по всем журналам: у самолётов их столько, сколько
+    # аккаунтов, плюс общий для запусков из командной строки.
+    from web.services.providers import list_providers
+
+    titles = {p.id: p.title for p in list_providers(db)}
     blockers = []
     for service in Service:
-        record = blocking_attempt(service.value)
-        if record is not None:
+        for blocker in find_blockers(db, service.value):
+            names = [titles.get(pid, f"#{pid}") for pid in blocker.provider_ids]
+            if any(j.provider_id is None for j in blocker.journals):
+                names.append("общий журнал")
             blockers.append(
                 {
                     "service": service.value,
                     "title": SERVICE_TITLES[service.value],
-                    "record": record,
-                    "journal": journal_path(service.value),
+                    "record": blocker.record,
+                    "journal": ", ".join(str(j.path) for j in blocker.journals),
+                    "accounts": ", ".join(names),
                 }
             )
 

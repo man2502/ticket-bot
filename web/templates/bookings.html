@@ -18,6 +18,12 @@
     <tbody>
       <tr><th>Состояние</th><td>{{ status_titles.get(blocker.record.status, blocker.record.status) }}</td></tr>
       <tr><th>Начата</th><td>{{ blocker.record.started_at }}</td></tr>
+      {% if blocker.accounts %}
+      <tr><th>Аккаунт</th><td>{{ blocker.accounts }}</td></tr>
+      {% endif %}
+      {% if blocker.record.trip %}
+      <tr><th>Рейс</th><td>{{ blocker.record.trip }}</td></tr>
+      {% endif %}
       {% if blocker.record.booking_number %}
       <tr><th>Номер брони</th><td>{{ blocker.record.booking_number }}</td></tr>
       {% endif %}
@@ -48,6 +54,7 @@
   {% if user.is_admin %}
   <form method="post" action="/bookings/unblock" class="test-row">
     <input type="hidden" name="service" value="{{ blocker.service }}">
+    <input type="hidden" name="guard_key" value="{{ blocker.record.booking_key }}">
     <label>
       Впишите «{{ unblock_word }}», чтобы подтвердить
       <input name="confirm" placeholder="{{ unblock_word }}" autocomplete="off">
@@ -65,7 +72,7 @@
 <table class="grid">
   <thead>
     <tr>
-      <th>Когда</th><th>Процесс</th><th>Сервис</th><th>Рейс</th><th>Состояние</th>
+      <th>Когда</th><th>Процесс</th><th>Сервис</th><th>Аккаунт</th><th>Рейс</th><th>Состояние</th>
       <th>Номер</th><th>Оплата</th><th>Уведомление</th><th></th>
     </tr>
   </thead>
@@ -83,6 +90,8 @@
         {% endif %}
       </td>
       <td class="small">{{ service_titles.get(b.service, b.service) }}</td>
+      {# Аккаунт, на который оформлена бронь: платить и отменять — в нём. #}
+      <td class="small">{{ b.provider.title if b.provider else '—' }}</td>
       {# Рейс и время: по маршруту и дате не понять, утренний это рейс
          или вечерний, а в день их бывает два. #}
       <td class="small">{{ b.trip or '—' }}</td>

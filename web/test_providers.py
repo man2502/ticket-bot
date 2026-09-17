@@ -539,3 +539,97 @@ def test_two_providers_really_run_at_once(
     finally:
         stop_job(db, a, timeout=5)
         stop_job(db, b, timeout=5)
+
+
+# --------------------------------------------------------------------------- #
+# Удаление аккаунта и форма
+# --------------------------------------------------------------------------- #
+
+
+def test_busy_provider_cannot_be_deleted(db) -> None:
+    from web.services.providers import ProviderError, delete_provider
+
+    provider = _provider(db, "Занятый")
+    _mark_running(db, _job(db), provider)
+
+    with pytest.raises(ProviderError) as exc:
+        delete_provider(db, provider)
+    assert "занят" in str(exc.value)
+
+
+def test_provider_with_open_attempt_cannot_be_deleted(db) -> None:
+    """
+    Иначе панель перестала бы видеть его журнал, блокировка молча исчезла бы,
+    и те же люди ушли бы в бронь на другом аккаунте.
+    """
+    from web.services.providers import ProviderError, delete_provider, provider_journal_path
+
+    provider = _provider(db, "С попыткой")
+    _write_attempt(provider_journal_path(provider.id), key="k1", status="unknown")
+
+    with pytest.raises(ProviderError):
+        delete_provider(db, provider)
+
+
+def test_deleting_keeps_the_journal_on_disk(db) -> None:
+    """След настоящей брони должен остаться, даже когда аккаунт убрали."""
+    from web.models import Provider
+    from web.services.providers import delete_provider, provider_journal_path
+
+    provider = _provider(db, "Старый")
+    journal = provider_journal_path(provider.id)
+    _write_attempt(journal, key="k1", status="done", number="46MEMB")
+    guard_path = journal
+    # Попытка закрыта и снята — блокировки нет, удалять можно.
+    from core.booking_guard import BookingGuard
+
+    BookingGuard(guard_path).clear_all()
+
+    delete_provider(db, provider)
+    assert db.query(Provider).count() == 0
+    assert "46MEMB" in journal.read_text(encoding="utf-8")
+
+
+def test_password_is_not_wiped_by_an_empty_field(db) -> None:
+    """Правка названия не должна стирать пароль — пустое поле значит «не менять»."""
+    from web.services.providers import provider_password, save_provider
+
+    provider = _provider(db, "А")
+    save_provider(db, provider, {"name": "Б", "password": ""})
+    assert provider_password(provider) == "пароль"
+
+    save_provider(db, provider, {"password": "-"})
+    assert provider_password(provider) == ""
+
+
+def test_form_keeps_the_chosen_provider() -> None:
+    from web.routes.jobs import _collect_params
+
+    assert _collect_params("airlines", {"provider": "3"})["provider"] == "3"
+    assert _collect_params("airlines", {"provider": ""})["provider"] == ""
+    # Мусор из формы — это «любой», а не падение при запуске.
+    assert _collect_params("airlines", {"provider": "abc"})["provider"] == ""
+
+
+def test_pages_are_registered_as_routes() -> None:
+    """
+    Страховка от незаметной поломки: вспомогательная функция, вставленная между
+    декоратором маршрута и самим обработчиком, забирает декоратор себе, и
+    список процессов пропадает, а панель падает на старте.
+    """
+    import importlib
+
+    # Приложение должно собираться целиком: ошибка регистрации маршрута
+    # роняет его на импорте.
+    importlib.import_module("web.app")
+    from web.routes import jobs, settings
+
+    def endpoints(router) -> dict[str, str]:
+        return {route.path: route.endpoint.__name__ for route in router.routes}
+
+    job_routes = endpoints(jobs.router)
+    assert job_routes.get("/jobs") == "list_jobs"
+    assert "/settings/providers" in endpoints(settings.router)
+    for router in (jobs.router, settings.router):
+        names = endpoints(router).values()
+        assert not any(name.startswith("_") for name in names), names

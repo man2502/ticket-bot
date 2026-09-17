@@ -10,14 +10,20 @@
   </div>
 </div>
 
-{# Очередь на сервис одна: два параллельных поиска с одного адреса — это бан,
-   а не вдвое больше шансов. Показываем, кто её занимает. #}
+{# У поездов очередь одна на сервис, у самолётов — на аккаунт. Баннер
+   появляется, только когда запустить новый действительно нельзя. #}
 {% for service, job_id in busy.items() %}
   {% if job_id %}
   <div class="alert info">
-    {{ service_titles[service] }}: сейчас работает
-    <a href="/jobs/{{ job_id }}">процесс #{{ job_id }}</a>.
-    Следующий по этому сервису можно запустить, когда он завершится.
+    {% if service == 'airlines' %}
+      {{ service_titles[service] }}: свободных аккаунтов нет — работает, например,
+      <a href="/jobs/{{ job_id }}">процесс #{{ job_id }}</a>.
+      Новый можно запустить, когда один из процессов завершится.
+    {% else %}
+      {{ service_titles[service] }}: сейчас работает
+      <a href="/jobs/{{ job_id }}">процесс #{{ job_id }}</a>.
+      Следующий по этому сервису можно запустить, когда он завершится.
+    {% endif %}
   </div>
   {% endif %}
 {% endfor %}
@@ -27,7 +33,7 @@
   <thead>
     <tr>
       <th>#</th><th>Сервис</th><th>Маршрут</th><th>Дата</th>
-      <th>Пассажиры</th><th>Статус</th><th>Создан</th>
+      <th>Аккаунт</th><th>Пассажиры</th><th>Статус</th><th>Создан</th>
     </tr>
   </thead>
   <tbody>
@@ -37,6 +43,9 @@
       <td>{{ service_titles[job.service] }}</td>
       <td>{{ job.source }} → {{ job.destination }}</td>
       <td>{{ job.depart_date }}</td>
+      <td class="small">
+        {% if job.provider %}{{ job.provider.title }}{% elif job.service == 'airlines' %}<span class="muted">любой</span>{% else %}<span class="muted">—</span>{% endif %}
+      </td>
       <td class="small">{{ job.passengers|length }}</td>
       <td><span class="status status-{{ job.status }}">{{ job.status }}</span></td>
       <td class="muted small">
