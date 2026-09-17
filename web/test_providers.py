@@ -331,15 +331,50 @@ def _tag(doc: str) -> str:
     return passenger_tag(doc)
 
 
-def test_same_passengers_on_another_running_provider_are_refused(db) -> None:
-    """Два аккаунта на одних и тех же людей — две брони и два счёта."""
+def test_same_passengers_in_parallel_are_allowed_by_default(db) -> None:
+    """
+    По умолчанию одного человека можно искать сразу с нескольких аккаунтов:
+    так решил владелец панели — шансов больше, риск двух броней он принимает.
+    """
     from web.services.bookings import job_start_blocker
 
     first, second = _provider(db, "Первый"), _provider(db, "Второй")
     _mark_running(db, _job(db, doc="I-LB 897989"), first)
 
     job = _job(db, doc="I-LB 897989", provider=second)
+    assert job_start_blocker(db, job) == ""
+
+
+def test_same_passengers_are_refused_when_sharing_is_off(db) -> None:
+    """Галочку можно снять — и проверка вернётся: две брони, два счёта."""
+    from web.services.bookings import job_start_blocker
+    from web.services.settings import save_service_config
+
+    save_service_config(db, "airlines", {"allow_shared_passengers": False})
+    first, second = _provider(db, "Первый"), _provider(db, "Второй")
+    _mark_running(db, _job(db, doc="I-LB 897989"), first)
+
+    job = _job(db, doc="I-LB 897989", provider=second)
     assert "процесс" in job_start_blocker(db, job)
+
+
+def test_open_attempt_still_blocks_when_sharing_is_on(db) -> None:
+    """
+    Разрешение касается только параллельного поиска. Незакрытая попытка —
+    это бронь, которая уже есть или могла появиться, и повтор поверх неё
+    остаётся под запретом.
+    """
+    from web.services.bookings import job_start_blocker
+    from web.services.providers import provider_journal_path
+    from web.services.settings import get_service_config
+
+    assert get_service_config(db, "airlines").allow_shared_passengers is True
+    first, second = _provider(db, "Первый"), _provider(db, "Второй")
+    _write_attempt(provider_journal_path(first.id), key="k1", status="unknown",
+                   passengers=_tag("ILB897989"))
+
+    job = _job(db, doc="I-LB 897989", provider=second)
+    assert "незакрытая попытка" in job_start_blocker(db, job)
 
 
 def test_different_passengers_run_in_parallel(db) -> None:

@@ -213,6 +213,19 @@
                     'Все аккаунты ходят с одного адреса — сайт режет по адресу') }}
       {% endif %}
     </div>
+    {% if svc.needs_auth %}
+    <label class="checkbox">
+      <input type="checkbox" name="allow_shared_passengers"
+             {% if svc.allow_shared_passengers %}checked{% endif %}>
+      Одни и те же пассажиры в нескольких процессах
+      <span class="field-hint">
+        Включено — можно искать одного человека сразу с нескольких аккаунтов,
+        шансов больше. Но если места найдутся у двух процессов одновременно,
+        будет две брони и два счёта. Незакрытая попытка брони всё равно
+        блокирует запуск.
+      </span>
+    </label>
+    {% endif %}
 
     {% if svc.has_captcha %}
     <h3>Капча</h3>

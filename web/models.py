@@ -279,6 +279,11 @@ class ServiceConfig(Base):
     # с одного адреса, и сайт режет по адресу, а не только по аккаунту.
     max_parallel: Mapped[int] = mapped_column(Integer, default=2)
 
+    # Можно ли искать одних и тех же людей в нескольких процессах сразу —
+    # с разных аккаунтов. Шансы выше, но если места найдутся у двух процессов
+    # одновременно, будет две брони и два счёта. Решение за человеком.
+    allow_shared_passengers: Mapped[bool] = mapped_column(Boolean, default=True)
+
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
 

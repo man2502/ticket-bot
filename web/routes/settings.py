@@ -242,6 +242,10 @@ async def save_service(
         "captcha_manual": "captcha_manual" in raw,
         "auto_book": "auto_book" in raw,
     }
+    if service == Service.AIRLINES.value:
+        # Галочка есть только у самолётов. Для поездов её не передаём,
+        # иначе сохранение их формы молча выключало бы настройку.
+        data["allow_shared_passengers"] = "allow_shared_passengers" in raw
 
     save_service_config(db, service, data)
     return _page(request, user, db, message=f"{SERVICE_TITLES[service]}: настройки сохранены")

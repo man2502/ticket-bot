@@ -171,6 +171,7 @@ def save_service_config(db, service: str, data: dict[str, Any]) -> ServiceConfig
         "is_enabled",
         "captcha_manual",
         "auto_book",
+        "allow_shared_passengers",
     ):
         if field in data:
             setattr(config, field, bool(data[field]))
@@ -254,6 +255,7 @@ def service_config_view(db, service: str) -> dict[str, Any]:
         "captcha_manual": config.captcha_manual,
         "captcha_max_attempts": config.captcha_max_attempts,
         "max_parallel": config.max_parallel,
+        "allow_shared_passengers": config.allow_shared_passengers,
         "auto_book": config.auto_book,
     }
 

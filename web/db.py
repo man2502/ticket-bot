@@ -176,6 +176,13 @@ def _migrate() -> None:
             conn.execute(
                 text("ALTER TABLE service_configs ADD COLUMN max_parallel INTEGER NOT NULL DEFAULT 2")
             )
+        if columns and "allow_shared_passengers" not in columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE service_configs "
+                    "ADD COLUMN allow_shared_passengers BOOLEAN NOT NULL DEFAULT 1"
+                )
+            )
 
     # Отдельным соединением: внутри транзакции PRAGMA foreign_keys не действует.
     _allow_bookings_without_job()

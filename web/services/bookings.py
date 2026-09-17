@@ -214,6 +214,14 @@ def job_start_blocker(db, job: Job) -> str:
             + ". Проверьте брони у перевозчика и снимите блокировку в разделе «Брони»."
         )
 
+    from web.services.settings import get_service_config
+
+    if get_service_config(db, Service.AIRLINES.value).allow_shared_passengers:
+        # Человек разрешил искать одних и тех же людей с нескольких аккаунтов.
+        # Проверка незакрытых попыток выше при этом остаётся: там бронь уже
+        # есть или могла появиться, и это не параллельный поиск, а повтор.
+        return ""
+
     others = (
         db.query(Job)
         .filter(
