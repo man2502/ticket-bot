@@ -213,17 +213,25 @@ def test_railway_needs_no_credentials(db) -> None:
 
 
 def test_airlines_reports_missing_credentials(db) -> None:
-    from web.services.settings import missing_credentials
+    """
+    Нужны учётка приложения (общая) и хотя бы один аккаунт перевозчика.
 
-    assert len(missing_credentials(db, "airlines")) == 3
+    Аккаунты теперь живут у провайдеров: их может быть несколько, и каждый
+    процесс самолётов идёт от своего.
+    """
+    from web.services.providers import save_provider
+    from web.services.settings import missing_credentials, save_service_config
 
-    from web.services.settings import save_service_config
+    assert len(missing_credentials(db, "airlines")) == 2
 
-    save_service_config(
-        db,
-        "airlines",
-        {"login": "+99361234567", "password_enc": "п", "extra_password_enc": "и"},
-    )
+    save_service_config(db, "airlines", {"extra_password_enc": "и"})
+    assert len(missing_credentials(db, "airlines")) == 1
+
+    # Аккаунт без пароля не считается.
+    provider = save_provider(db, None, {"login": "+99361234567"})
+    assert len(missing_credentials(db, "airlines")) == 1
+
+    save_provider(db, provider, {"password": "п"})
     assert missing_credentials(db, "airlines") == []
 
 

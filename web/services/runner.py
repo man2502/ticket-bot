@@ -140,6 +140,84 @@ def _popen_kwargs() -> dict:
     return {"start_new_session": True}
 
 
+def _assign_provider(db, job: Job) -> None:
+    """
+    Выбрать аккаунт для процесса самолётов. Бросает JobStartError с причиной.
+
+    Если человек выбрал аккаунт сам (`params["provider"]`), берём только его.
+    Иначе — первый свободный: включённый, с заполненными доступами, не занятый
+    другим процессом и без незакрытой попытки брони в своём журнале (с ней
+    бот остановится сразу после старта).
+
+    Выбор хранится в `job.provider_id`, но при каждом запуске делается заново,
+    если человек просил «любой»: иначе перезапуск остановленного процесса
+    упирался бы в аккаунт, который тем временем занял кто-то другой.
+    """
+    from web.services.bookings import provider_blocker
+    from web.services.providers import (
+        busy_provider_ids,
+        get_provider,
+        list_providers,
+        provider_missing,
+        running_count,
+    )
+    from web.services.settings import get_service_config
+
+    config = get_service_config(db, job.service)
+    running = running_count(db, job.service, exclude_job_id=job.id)
+    if running >= config.max_parallel:
+        raise JobStartError(
+            f"Уже работает процессов самолётов: {running} — это предел из настроек "
+            f"({config.max_parallel}). Все аккаунты ходят с одного адреса, и сайт "
+            f"режет запросы по адресу."
+        )
+
+    busy = busy_provider_ids(db, exclude_job_id=job.id)
+
+    def problem_with(provider) -> str:
+        if not provider.is_enabled:
+            return "выключен"
+        missing = provider_missing(provider)
+        if missing:
+            return "не заполнено: " + ", ".join(missing)
+        if provider.id in busy:
+            return f"занят процессом #{busy[provider.id]}"
+        blocker = provider_blocker(db, provider.id)
+        if blocker is not None:
+            record = blocker.record
+            return (
+                f"в журнале незакрытая попытка брони ({record.status}, {record.started_at})"
+            )
+        return ""
+
+    chosen_id = str(job.params.get("provider") or "").strip()
+    if chosen_id:
+        provider = get_provider(db, int(chosen_id)) if chosen_id.isdigit() else None
+        if provider is None:
+            raise JobStartError("Выбранный аккаунт перевозчика удалён — выберите другой")
+        problem = problem_with(provider)
+        if problem:
+            raise JobStartError(f"Аккаунт «{provider.title}»: {problem}")
+        job.provider = provider
+        return
+
+    providers = list_providers(db, job.service)
+    if not providers:
+        raise JobStartError(
+            "Нет ни одного аккаунта перевозчика. Добавьте его в «Настройки → Самолёты»."
+        )
+
+    reasons: list[str] = []
+    for provider in providers:
+        problem = problem_with(provider)
+        if not problem:
+            job.provider = provider
+            return
+        reasons.append(f"«{provider.title}» — {problem}")
+
+    raise JobStartError("Нет свободного аккаунта: " + "; ".join(reasons))
+
+
 def _missing_booking_contact(db, job: Job) -> str:
     """
     Проверить контакты для брони заранее. Пустая строка — всё в порядке.
@@ -186,12 +264,17 @@ def start_job(db, job: Job) -> None:
     if is_running(job.id):
         raise JobStartError("Процесс уже запущен")
 
-    busy = active_job_id(db, job.service)
-    if busy is not None and busy != job.id:
-        raise JobStartError(
-            f"По этому сервису уже работает процесс #{busy}. "
-            f"Два поиска одновременно — это бан, а не вдвое больше шансов."
-        )
+    if job.service == Service.AIRLINES.value:
+        # У самолётов очередь не на сервис, а на аккаунт: процессов может быть
+        # столько, сколько аккаунтов (но не больше предела из настроек).
+        _assign_provider(db, job)
+    else:
+        busy = active_job_id(db, job.service)
+        if busy is not None and busy != job.id:
+            raise JobStartError(
+                f"По этому сервису уже работает процесс #{busy}. "
+                f"Два поиска одновременно — это бан, а не вдвое больше шансов."
+            )
 
     from web.services.settings import missing_credentials
 
@@ -206,15 +289,22 @@ def start_job(db, job: Job) -> None:
     # Незакрытая попытка брони в журнале — бот при запуске остановится сам.
     # Говорим об этом заранее, иначе процесс просто завершится через секунду,
     # и человек будет гадать, почему.
-    from web.services.bookings import blocking_attempt
+    if job.service == Service.AIRLINES.value:
+        from web.services.bookings import job_start_blocker
 
-    blocker = blocking_attempt(job.service)
-    if blocker is not None:
-        raise JobStartError(
-            f"Автобронь заблокирована незакрытой попыткой ({blocker.status}, "
-            f"{blocker.started_at}). Проверьте брони у перевозчика и снимите "
-            f"блокировку в разделе «Брони»."
-        )
+        problem = job_start_blocker(db, job)
+        if problem:
+            raise JobStartError(problem)
+    else:
+        from web.services.bookings import blocking_attempt
+
+        blocker = blocking_attempt(job.service)
+        if blocker is not None:
+            raise JobStartError(
+                f"Автобронь заблокирована незакрытой попыткой ({blocker.status}, "
+                f"{blocker.started_at}). Проверьте брони у перевозчика и снимите "
+                f"блокировку в разделе «Брони»."
+            )
 
     try:
         launch = prepare_launch(db, job)

@@ -191,6 +191,8 @@ def save_service_config(db, service: str, data: dict[str, Any]) -> ServiceConfig
         # Меньше 30 секунд после 429 — верный способ получить бан вместо билета.
         "rate_limit_pause_sec": (30, 3600),
         "captcha_max_attempts": (1, 20),
+        # Больше десяти аккаунтов с одного адреса — верный бан, а не билеты.
+        "max_parallel": (1, 10),
     }
     for field, (low, high) in limits.items():
         if field not in data:
@@ -251,6 +253,7 @@ def service_config_view(db, service: str) -> dict[str, Any]:
         "rate_limit_pause_sec": config.rate_limit_pause_sec,
         "captcha_manual": config.captcha_manual,
         "captcha_max_attempts": config.captcha_max_attempts,
+        "max_parallel": config.max_parallel,
         "auto_book": config.auto_book,
     }
 
@@ -266,14 +269,18 @@ def missing_credentials(db, service: str) -> list[str]:
     if service != Service.AIRLINES.value:
         return []
 
+    from web.services.providers import list_providers, provider_missing
+
     config = get_service_config(db, service)
     missing: list[str] = []
     # Формулировки совпадают с подписями в форме — иначе человек ищет поле,
     # которого на странице нет.
     if not config.extra_password_enc:
         missing.append("пароль учётки приложения")
-    if not config.login:
-        missing.append("телефон вашего аккаунта T5")
-    if not config.password_enc:
-        missing.append("пароль вашего аккаунта T5")
+    # Аккаунты теперь у провайдеров: хватит одного включённого и заполненного.
+    ready = [
+        p for p in list_providers(db, service, enabled_only=True) if not provider_missing(p)
+    ]
+    if not ready:
+        missing.append("хотя бы один аккаунт T5 с телефоном и паролем")
     return missing

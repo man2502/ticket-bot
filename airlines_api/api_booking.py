@@ -30,7 +30,7 @@ REPO_ROOT = API_ROOT.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.booking_guard import AlreadySettled, BookingGuard, booking_key
+from core.booking_guard import AlreadySettled, BookingGuard, booking_key, passenger_tags
 from core.term import green
 from api_client import RequestFailed, ResultUnknown, api_call
 from api_env import env, to_api_date
@@ -48,6 +48,19 @@ from passenger_loader import get_passengers
 # Журнал попыток брони. Отдельно от api_state.json: обычное сохранение состояния
 # не должно иметь возможности затереть защиту от повторной брони.
 BOOKINGS_JOURNAL = API_ROOT / "api_bookings.json"
+
+
+def bookings_journal() -> Path:
+    """
+    Журнал попыток брони этого запуска.
+
+    По умолчанию общий файл в airlines_api/. Панель задаёт API_BOOKINGS_JOURNAL,
+    свой на каждый аккаунт: журнал читается и перезаписывается целиком, и два
+    процесса в одном файле теряли бы записи друг друга. А это защита от
+    повторной брони.
+    """
+    own = env("API_BOOKINGS_JOURNAL")
+    return Path(own) if own else BOOKINGS_JOURNAL
 
 SKIP_FLIGHT_RE = re.compile(
     r"мест\s*нет|транзит|сквозн|transit|connecting|пересадк|via\b|no\s*seat|sold\s*out",
@@ -857,7 +870,7 @@ def try_auto_book(
         return BookingResult(ok=False, error=err or "нет подходящих рейсов")
 
     passengers = get_passengers(verbose=False)
-    guard = guard or BookingGuard(BOOKINGS_JOURNAL)
+    guard = guard or BookingGuard(bookings_journal())
 
     # Пассажиры и контакты одинаковы для всех рейсов: проверяем один раз.
     # Гонять цикл по рейсам с незаполненным паспортом бессмысленно — откажут
@@ -927,7 +940,7 @@ def _book_one_flight(
     # Пишем pending НА ДИСК до отправки: если процесс умрёт между POST и ответом,
     # следующий запуск увидит незакрытую попытку и не станет бронировать вслепую.
     try:
-        idempotency_key = guard.begin(key)
+        idempotency_key = guard.begin(key, passengers=passenger_tags(passengers))
     except AlreadySettled as exc:
         # Журнал знает про эту бронь больше, чем проверка выше: например,
         # запись появилась между ними. Запрос не отправляем.

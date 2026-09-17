@@ -82,6 +82,10 @@ def local_env_warning(service: str) -> str:
     оттуда побеждают настройки панели. Для запусков из командной строки это
     задумано, но человек должен знать, что панель тут не главная.
     """
+    if service == Service.AIRLINES.value:
+        # Самолётному боту панель даёт свой файл на аккаунт (API_LOCAL_ENV),
+        # и общий airlines_api/.env.local он в этом случае не читает вовсе.
+        return ""
     local = SERVICE_DIRS[service] / ".env.local"
     if not local.exists():
         return ""
@@ -162,9 +166,24 @@ def _railway_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> dic
 
 
 def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> dict[str, Any]:
+    from web.services.providers import (
+        provider_env_path,
+        provider_journal_path,
+        provider_password,
+        provider_slot_second,
+        provider_state_path,
+    )
+
     config = get_service_config(db, Service.AIRLINES.value)
     params = job.params
     contact_email, contact_phone = booking_contacts(db, job)
+
+    provider = job.provider
+    if provider is None:
+        # Выбирает провайдера запуск (runner.start_job). Сюда без него попасть
+        # не должны — а если попали, лучше не запускать, чем пойти с пустым
+        # аккаунтом и получить отказ авторизации уже на сайте.
+        raise ValueError("не выбран аккаунт перевозчика (провайдер)")
 
     values: dict[str, Any] = {
         # См. комментарий в _railway_env: письма и SMS отправляет панель.
@@ -175,8 +194,9 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
         "PASSENGERS_FILE": passengers_file,
         "PASSENGER_IDS": passenger_ids,
         # Доступы: по ним бот сам получает и обновляет Bearer-токены.
-        "API_CUSTOMER_PHONE": config.login,
-        "API_CUSTOMER_PASSWORD": get_service_secret(db, Service.AIRLINES.value, "password_enc"),
+        # Аккаунт — у провайдера, учётка приложения — общая в настройках.
+        "API_CUSTOMER_PHONE": provider.login,
+        "API_CUSTOMER_PASSWORD": provider_password(provider),
         "API_IOS_LOGIN": config.extra_login or "ios",
         "API_IOS_PASSWORD": get_service_secret(db, Service.AIRLINES.value, "extra_password_enc"),
         "API_AUTO_REFRESH_TOKENS": "1",
@@ -184,7 +204,18 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
         # и не должна править файлы модуля.
         "API_SAVE_TOKENS": "0",
         "API_CHECK_PERIOD_SEC": config.check_period_sec,
-        "API_CHECK_AT_SEC": config.check_at_second,
+        # У каждого аккаунта своя секунда: с одного адреса в одну и ту же
+        # секунду — ровно та картина, по которой сайт режет запросы.
+        "API_CHECK_AT_SEC": provider_slot_second(
+            db, provider, period_sec=config.check_period_sec, base_second=config.check_at_second
+        ),
+        # Свои файлы у каждого аккаунта. Общими они перетирали бы друг друга:
+        # отпечаток аккаунта, журнал броней, состояние монитора.
+        "API_LOCAL_ENV": provider_env_path(provider.id),
+        "API_BOOKINGS_JOURNAL": provider_journal_path(provider.id),
+        "API_STATE_FILE": provider_state_path(provider.id),
+        # Картинка капчи — своя у запуска: иначе один процесс решал бы чужую.
+        "API_CAPTCHA_IMAGE": passengers_file.parent / "captcha_last.png",
         "API_AUTO_BOOK": "1" if config.auto_book else "0",
         "API_RATE_LIMIT_PAUSE_SEC": config.rate_limit_pause_sec,
         "API_REPEATED_ERROR_PAUSE_AFTER": config.repeated_error_pause_after,

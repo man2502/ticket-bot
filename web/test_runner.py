@@ -96,11 +96,30 @@ def _make_job(db, service: str = "railway", **over):
     )
     data.update(over)
     job = Job(**data)
+    if service == "airlines" and "provider_id" not in over:
+        # Процесс самолётов без аккаунта не запускается: в жизни его назначает
+        # start_job, а тестам подготовки окружения нужен аккаунт сразу.
+        job.provider = _provider(db)
     db.add(job)
     db.flush()
     db.add(JobPassenger(job_id=job.id, passenger_id=pax.id, position=0))
     db.commit()
     return job
+
+
+def _provider(db, *, login: str = "+99361234567", password: str = "пароль-кабинета", **over):
+    """Аккаунт перевозчика. Без аргументов — первый существующий или новый."""
+    from web.models import Provider
+    from web.services.providers import save_provider
+
+    if not over and login == "+99361234567":
+        existing = db.query(Provider).order_by(Provider.id).first()
+        if existing is not None:
+            return existing
+    data = {"name": over.pop("name", ""), "login": login, "password": password,
+            "is_enabled": over.pop("is_enabled", True)}
+    data.update(over)
+    return save_provider(db, None, data)
 
 
 def _env_values(path: Path) -> dict[str, str]:
@@ -175,11 +194,11 @@ def test_airlines_credentials_are_decrypted(db) -> None:
     from web.services.bot_env import prepare_launch
     from web.services.settings import save_service_config
 
+    # Аккаунт — у провайдера, учётка приложения — общая в настройках сервиса.
     save_service_config(
         db,
         "airlines",
-        {"login": "+99361234567", "password_enc": "пароль-кабинета",
-         "extra_login": "ios", "extra_password_enc": "пароль-приложения"},
+        {"extra_login": "ios", "extra_password_enc": "пароль-приложения"},
     )
 
     job = _make_job(db, "airlines")

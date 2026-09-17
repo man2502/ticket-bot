@@ -154,6 +154,29 @@ def _migrate() -> None:
                 text("ALTER TABLE bookings ADD COLUMN trip VARCHAR(255) NOT NULL DEFAULT ''")
             )
 
+        # Провайдеры: процесс и бронь помнят, от чьего аккаунта они сделаны.
+        # REFERENCES в ADD COLUMN SQLite разрешает, если значение по умолчанию NULL.
+        if booking_columns and "provider_id" not in booking_columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE bookings ADD COLUMN provider_id INTEGER "
+                    "REFERENCES providers(id) ON DELETE SET NULL"
+                )
+            )
+        job_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(jobs)"))}
+        if job_columns and "provider_id" not in job_columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE jobs ADD COLUMN provider_id INTEGER "
+                    "REFERENCES providers(id) ON DELETE SET NULL"
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_provider_id ON jobs (provider_id)"))
+        if columns and "max_parallel" not in columns:
+            conn.execute(
+                text("ALTER TABLE service_configs ADD COLUMN max_parallel INTEGER NOT NULL DEFAULT 2")
+            )
+
     # Отдельным соединением: внутри транзакции PRAGMA foreign_keys не действует.
     _allow_bookings_without_job()
 
@@ -200,6 +223,7 @@ def _allow_bookings_without_job() -> None:
                     guard_key VARCHAR(64) NOT NULL,
                     booking_number VARCHAR(64) NOT NULL,
                     payment_url TEXT NOT NULL,
+                    provider_id INTEGER REFERENCES providers(id) ON DELETE SET NULL,
                     trip VARCHAR(255) NOT NULL DEFAULT '',
                     detail TEXT NOT NULL,
                     created_at DATETIME NOT NULL
@@ -208,9 +232,9 @@ def _allow_bookings_without_job() -> None:
             )
             cursor.execute(
                 "INSERT INTO bookings_new (id, job_id, service, status, guard_key, "
-                "booking_number, payment_url, trip, detail, created_at) "
+                "booking_number, payment_url, provider_id, trip, detail, created_at) "
                 "SELECT id, job_id, service, status, guard_key, booking_number, "
-                "payment_url, trip, detail, created_at FROM bookings"
+                "payment_url, provider_id, trip, detail, created_at FROM bookings"
             )
             cursor.execute("DROP TABLE bookings")
             cursor.execute("ALTER TABLE bookings_new RENAME TO bookings")
@@ -270,6 +294,12 @@ def _seed_defaults() -> None:
             if service.value in configured:
                 continue
             session.add(_default_service_config(service))
+
+    # Отдельной сессией: сид провайдера читает настройки сервиса, созданные выше.
+    from web.services.providers import seed_from_legacy
+
+    with session_scope() as session:
+        seed_from_legacy(session)
 
 
 def _default_service_config(service):

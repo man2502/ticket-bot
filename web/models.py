@@ -274,7 +274,47 @@ class ServiceConfig(Base):
     # Автобронь. Выключенный режим = только уведомление о найденных местах.
     auto_book: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # Сколько процессов сервиса может идти одновременно. Имеет смысл только
+    # у самолётов, где процессов столько, сколько аккаунтов: все они ходят
+    # с одного адреса, и сайт режет по адресу, а не только по аккаунту.
+    max_parallel: Mapped[int] = mapped_column(Integer, default=2)
+
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+class Provider(Base):
+    """
+    Аккаунт перевозчика, от имени которого бот ищет и бронирует.
+
+    Раньше аккаунт был один и жил в настройках сервиса, поэтому самолётный
+    поиск мог идти только один: второй процесс пошёл бы с теми же токенами.
+    Теперь каждый процесс работает от своего провайдера, и процессов может
+    быть столько, сколько аккаунтов.
+
+    Учётка приложения (`ios` + пароль) сюда не входит: это ключ клиента
+    приложения T5, он один на всех и остаётся в настройках сервиса.
+    """
+
+    __tablename__ = "providers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service: Mapped[str] = mapped_column(String(16), default=Service.AIRLINES.value, index=True)
+    name: Mapped[str] = mapped_column(String(64), default="")
+    # Телефон личного кабинета T5 и пароль от него (зашифрован, см. web.crypto).
+    login: Mapped[str] = mapped_column(String(64), default="")
+    password_enc: Mapped[str] = mapped_column(Text, default="")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Секунда первой отметки. Пусто — панель разнесёт провайдеров сама:
+    # несколько аккаунтов с одного адреса в одну и ту же секунду — это
+    # ровно та картина, по которой сайт режет запросы.
+    check_at_second: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    @property
+    def title(self) -> str:
+        return self.name or self.login or f"Провайдер #{self.id}"
 
 
 # --------------------------------------------------------------------------- #
@@ -305,6 +345,12 @@ class Job(Base):
 
     params_json: Mapped[str] = mapped_column(Text, default="{}")
 
+    # От чьего аккаунта идёт поиск. Пусто при создании — панель выберет
+    # свободного провайдера в момент запуска. У поездов всегда пусто.
+    provider_id: Mapped[int | None] = mapped_column(
+        ForeignKey("providers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     # Куда слать ссылку на оплату. Пусто — берётся из общих настроек.
     notify_email: Mapped[str] = mapped_column(String(255), default="")
     notify_phone: Mapped[str] = mapped_column(String(32), default="")
@@ -330,6 +376,7 @@ class Job(Base):
     # Без delete-orphan: удаление процесса не должно стирать бронь. Она есть
     # у перевозчика, за неё выставлен счёт, и в панели она остаётся без процесса.
     bookings: Mapped[list["Booking"]] = relationship(back_populates="job")
+    provider: Mapped[Provider | None] = relationship()
 
     @property
     def params(self) -> dict[str, Any]:
@@ -413,6 +460,10 @@ class Booking(Base):
     status: Mapped[str] = mapped_column(String(16))
     guard_key: Mapped[str] = mapped_column(String(64), default="")
     booking_number: Mapped[str] = mapped_column(String(64), default="")
+    # Аккаунт, на который оформлена бронь: платить и отменять — в нём.
+    provider_id: Mapped[int | None] = mapped_column(
+        ForeignKey("providers.id", ondelete="SET NULL"), nullable=True
+    )
     payment_url: Mapped[str] = mapped_column(Text, default="")
     # Что именно забронировано: рейс и время, поезд, вагон, места. Приходит
     # из журнала бота — только он знает подробности рейса.
@@ -421,6 +472,7 @@ class Booking(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
 
     job: Mapped[Job | None] = relationship(back_populates="bookings")
+    provider: Mapped[Provider | None] = relationship()
 
 
 class NotificationLog(Base):

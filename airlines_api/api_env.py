@@ -70,7 +70,17 @@ def load_api_env(path: Path | str | None = None) -> Path:
     _loaded_env_path = candidate
     print(f"[api-env] {candidate.name}")
 
-    if API_LOCAL_ENV.exists():
+    own_local = env("API_LOCAL_ENV")
+    if own_local:
+        # Панель запускает несколько аккаунтов сразу, и у каждого свой файл.
+        # Общий airlines_api/.env.local в этом случае не читаем ВОВСЕ: он
+        # перекрывает check.env, и второй процесс пошёл бы с отпечатком
+        # и токенами первого аккаунта.
+        own_path = Path(own_local)
+        if own_path.exists():
+            load_dotenv(own_path, override=True)
+            print(f"[api-env] {own_path.name} (свой для аккаунта)")
+    elif API_LOCAL_ENV.exists():
         load_dotenv(API_LOCAL_ENV, override=True)
         print(f"[api-env] {API_LOCAL_ENV.name}")
     elif LEGACY_LOCAL_ENV.exists():
@@ -89,8 +99,15 @@ def api_env_path() -> Path:
 
 
 def api_secrets_env_path() -> Path:
-    """Локальный env для Bearer-токенов (airlines_api/.env.local)."""
-    return API_LOCAL_ENV
+    """
+    Локальный env для отпечатка аккаунта и Bearer-токенов.
+
+    По умолчанию airlines_api/.env.local. Если задан API_LOCAL_ENV — свой файл:
+    панель даёт его каждому аккаунту, чтобы процессы не перезаписывали друг другу
+    отпечаток и не решали по кругу, что аккаунт сменился.
+    """
+    own_local = env("API_LOCAL_ENV")
+    return Path(own_local) if own_local else API_LOCAL_ENV
 
 
 def to_api_date(raw: str) -> str:

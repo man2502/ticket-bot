@@ -76,7 +76,7 @@ from api_env import (
 )
 from api_session import is_auth_forbidden, print_auth_help
 from api_booking import (
-    BOOKINGS_JOURNAL,
+    bookings_journal,
     BookingResult,
     auto_book_enabled,
     count_direct_flights,
@@ -94,6 +94,22 @@ from passenger_loader import format_passenger_names, get_passenger_counts_by_typ
 
 STATE_FILE = API_ROOT / "api_state.json"
 CAPTCHA_IMAGE_PATH = API_ROOT / "api_captcha_last.png"
+
+
+def state_file() -> Path:
+    """Состояние монитора: общий файл или свой (API_STATE_FILE) для аккаунта."""
+    own = env("API_STATE_FILE")
+    return Path(own) if own else STATE_FILE
+
+
+def captcha_image_path() -> Path:
+    """
+    Куда класть последнюю капчу. Панель даёт каждому запуску свой файл:
+    иначе один процесс открывал бы и решал картинку другого.
+    """
+    own = env("API_CAPTCHA_IMAGE")
+    return Path(own) if own else CAPTCHA_IMAGE_PATH
+
 
 # Палитра общая (core.term): раньше пять модулей держали свои копии ANSI-кодов,
 # и оттенки успели разъехаться. Плюс core.term не красит вывод, если он идёт
@@ -335,13 +351,13 @@ def wait_for_check_slot() -> float:
 
 def load_state() -> dict:
     """Состояние монитора. Битый файл не роняет запуск — уезжает в .corrupt."""
-    data = load_json(STATE_FILE, {})
+    data = load_json(state_file(), {})
     return data if isinstance(data, dict) else {}
 
 
 def save_state(state: dict) -> None:
     """Атомарная запись: truncate+write мог оставить обрезанный файл после Ctrl-C."""
-    save_json(STATE_FILE, state)
+    save_json(state_file(), state)
 
 
 def route_line(date_str: str | None = None) -> str:
@@ -823,13 +839,14 @@ def api_captcha_n_digits() -> int:
 
 
 def show_captcha_image(image_bytes: bytes, *, open_viewer: bool | None = None) -> Path:
-    CAPTCHA_IMAGE_PATH.write_bytes(image_bytes)
+    image_path = captcha_image_path()
+    image_path.write_bytes(image_bytes)
     if open_viewer is None:
         open_viewer = manual_captcha_enabled() and sys.stdin.isatty()
     if open_viewer:
-        print(f"[captcha-api] картинка: {CAPTCHA_IMAGE_PATH}")
-        open_in_viewer(CAPTCHA_IMAGE_PATH)
-    return CAPTCHA_IMAGE_PATH
+        print(f"[captcha-api] картинка: {image_path}")
+        open_in_viewer(image_path)
+    return image_path
 
 
 def prompt_captcha_manual() -> str:
@@ -1009,7 +1026,7 @@ def solve_captcha_api(image_bytes: bytes) -> tuple[str, tuple[str, float] | None
 
     raise RuntimeError(
         "Капча: запусти в терминале (ручной ввод) или обучи captcha_model_api.pt. "
-        f"Картинка: {CAPTCHA_IMAGE_PATH}"
+        f"Картинка: {captcha_image_path()}"
     )
 
 
@@ -1259,7 +1276,7 @@ def check_booking_guard(guard: BookingGuard, *, force_rebook: bool) -> int | Non
         print(_red(f"  оплата:  {blocker.form_url}"))
     if blocker.detail:
         print(_red(f"  детали:  {blocker.detail}"))
-    print(f"  журнал:  {BOOKINGS_JOURNAL}")
+    print(f"  журнал:  {bookings_journal()}")
     print("Проверь брони в приложении T5, затем запусти с --force-rebook")
     return 2
 
@@ -1273,7 +1290,7 @@ def stop_on_unknown_booking(result: BookingResult, route: str) -> int:
             result.error,
             "",
             "Проверь список броней в приложении T5 ПЕРЕД повторным запуском.",
-            f"Журнал попыток: {BOOKINGS_JOURNAL}",
+            f"Журнал попыток: {bookings_journal()}",
             "Снять блокировку после проверки: --force-rebook",
         ]
     )
@@ -1362,7 +1379,7 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] checkVersion: {exc}")
 
-    guard = BookingGuard(BOOKINGS_JOURNAL)
+    guard = BookingGuard(bookings_journal())
     if auto_book_enabled():
         blocked = check_booking_guard(guard, force_rebook=force_rebook)
         if blocked is not None:

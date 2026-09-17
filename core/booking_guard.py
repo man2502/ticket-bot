@@ -29,6 +29,9 @@ __all__ = [
     "BookingGuard",
     "AttemptRecord",
     "AlreadySettled",
+    "passenger_tag",
+    "passenger_tags",
+    "split_tags",
     "PENDING",
     "DONE",
     "UNKNOWN",
@@ -61,6 +64,10 @@ class AttemptRecord:
     # и показывает бронь. Старые журналы без этого поля читаются как прежде:
     # `get()` подставляет пустую строку.
     trip: str = ""
+    # На кого бронь: метки пассажиров через запятую (см. passenger_tag).
+    # Нужны панели, чтобы не пустить второй аккаунт бронировать тех же людей.
+    # Пусто — запись старая, и на кого она, неизвестно.
+    passengers: str = ""
 
 
 def booking_key(*parts: Any) -> str:
@@ -76,6 +83,38 @@ def booking_key(*parts: Any) -> str:
 
 def _now() -> str:
     return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def passenger_tag(doc_number: str) -> str:
+    """
+    Метка пассажира для журнала: короткий хеш номера документа.
+
+    Почему не id. Номера пассажиров в панели и в passengers.json для запуска
+    из командной строки — разные пространства: один и тот же человек там под
+    разными номерами. А документ у человека один, и `I-LB 897989` с `ILB897989`
+    — тоже он: разделители и регистр отбрасываются.
+
+    Почему не сам номер. Журнал лежит на диске открытым текстом, а паспортные
+    данные там не нужны — нужно только понять, тот же это человек или нет.
+    """
+    normalized = "".join(ch for ch in str(doc_number or "") if ch.isalnum()).upper()
+    if not normalized:
+        return ""
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+
+
+def passenger_tags(passengers: Iterable[dict[str, Any]]) -> str:
+    """Метки всех пассажиров брони через запятую, без пустых и повторов."""
+    tags: list[str] = []
+    for pax in passengers:
+        tag = passenger_tag(pax.get("doc_number", ""))
+        if tag and tag not in tags:
+            tags.append(tag)
+    return ",".join(tags)
+
+
+def split_tags(raw: str) -> set[str]:
+    return {tag for tag in (raw or "").split(",") if tag}
 
 
 class BookingGuard:
@@ -152,7 +191,7 @@ class BookingGuard:
     def _save(self) -> None:
         save_json(self.path, self._data)
 
-    def begin(self, key: str) -> str:
+    def begin(self, key: str, *, passengers: str = "") -> str:
         """
         Зарегистрировать попытку ДО отправки запроса и вернуть idempotency-key.
 
@@ -177,6 +216,9 @@ class BookingGuard:
             idempotency_key=idem,
             status=PENDING,
             started_at=_now(),
+            # Пишем на попытке, а не на результате: самые опасные записи —
+            # pending и unknown, и как раз по ним нужно знать, на кого бронь.
+            passengers=passengers,
         )
         self._data["attempts"][key] = asdict(record)
         self._save()

@@ -28,12 +28,28 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.booking_guard import DONE, FAILED, PENDING, UNKNOWN, BookingGuard  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
 
-from web.models import Booking, Job, Service  # noqa: E402
+from core.booking_guard import (  # noqa: E402
+    DONE,
+    FAILED,
+    PENDING,
+    UNKNOWN,
+    BookingGuard,
+    passenger_tag,
+    split_tags,
+)
+
+from web.models import Booking, Job, JobStatus, Service  # noqa: E402
 from web.services.bot_env import SERVICE_JOURNALS, SERVICE_DIRS  # noqa: E402
 
 __all__ = [
+    "Journal",
+    "Blocker",
+    "journals",
+    "blockers",
+    "job_start_blocker",
+    "provider_blocker",
     "SERVICE_ROUTE_UNKNOWN",
     "SERVICE_NAMES",
     "booking_route",
@@ -69,6 +85,153 @@ def _guard(service: str) -> BookingGuard:
     return BookingGuard(journal_path(service))
 
 
+# --------------------------------------------------------------------------- #
+# Журналы всех аккаунтов
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class Journal:
+    """Журнал броней: общий (provider_id=None) или конкретного аккаунта."""
+
+    path: Path
+    provider_id: int | None = None
+
+    def guard(self) -> BookingGuard:
+        return BookingGuard(self.path)
+
+
+@dataclass
+class Blocker:
+    """Незакрытая попытка брони и журналы, где она лежит."""
+
+    record: object
+    journals: list[Journal]
+
+    @property
+    def provider_ids(self) -> list[int]:
+        return [j.provider_id for j in self.journals if j.provider_id is not None]
+
+
+def journals(db, service: str) -> list[Journal]:
+    """
+    Все журналы сервиса. Сначала журналы аккаунтов, общий — последним.
+
+    Порядок важен при подборе броней: запись, скопированная из общего журнала
+    в журнал аккаунта при переезде, должна достаться аккаунту, а не повиснуть
+    бесхозной.
+    """
+    found: list[Journal] = []
+    if service == Service.AIRLINES.value:
+        from web.services.providers import list_providers, provider_journal_path
+
+        for provider in list_providers(db, service):
+            path = provider_journal_path(provider.id)
+            if path.exists():
+                found.append(Journal(path, provider.id))
+    legacy = journal_path(service)
+    if legacy.exists():
+        found.append(Journal(legacy, None))
+    return found
+
+
+def job_journal(job: Job) -> Journal:
+    """Журнал, в который пишет бот этого процесса."""
+    if job.service == Service.AIRLINES.value and job.provider_id:
+        from web.services.providers import provider_journal_path
+
+        return Journal(provider_journal_path(job.provider_id), job.provider_id)
+    return Journal(journal_path(job.service), None)
+
+
+def blockers(db, service: str) -> list[Blocker]:
+    """
+    Незакрытые попытки брони по всем журналам сервиса.
+
+    Одна и та же запись может лежать в двух журналах: при переезде на
+    провайдеров общий журнал скопирован в журнал первого аккаунта. Человеку
+    это одна бронь, и показывать её дважды — значит заставить снимать
+    блокировку дважды.
+    """
+    merged: dict[tuple[str, str], Blocker] = {}
+    for journal in journals(db, service):
+        for record in journal.guard().records():
+            if record.status not in BLOCKING_STATUSES:
+                continue
+            key = (record.booking_key, record.started_at)
+            if key in merged:
+                merged[key].journals.append(journal)
+            else:
+                merged[key] = Blocker(record=record, journals=[journal])
+    return list(merged.values())
+
+
+def _job_tags(job: Job) -> set[str]:
+    return {
+        tag
+        for tag in (passenger_tag(link.passenger.doc_number) for link in job.passengers)
+        if tag
+    }
+
+
+def provider_blocker(db, provider_id: int) -> Blocker | None:
+    """
+    Незакрытая попытка в журнале самого аккаунта.
+
+    Бот при старте смотрит в свой журнал и остановится сам, если там что-то
+    висит, — вне зависимости от пассажиров. Панель говорит об этом заранее.
+    """
+    for blocker in blockers(db, Service.AIRLINES.value):
+        if provider_id in blocker.provider_ids:
+            return blocker
+    return None
+
+
+def job_start_blocker(db, job: Job) -> str:
+    """
+    Почему этот процесс самолётов нельзя запускать. Пустая строка — можно.
+
+    Аккаунтов несколько, и у каждого свой журнал — значит защита от повторной
+    брони внутри журнала не видит соседей. Второй аккаунт спокойно забронировал
+    бы тех же людей на тот же рейс: две брони, два счёта. Поэтому панель
+    сверяет пассажиров со ВСЕМИ журналами и со всеми работающими процессами.
+
+    Запись без меток пассажиров (сделана до их появления) блокирует всё: на кого
+    она, неизвестно, а ошибиться здесь стоит денег.
+    """
+    tags = _job_tags(job)
+
+    for blocker in blockers(db, Service.AIRLINES.value):
+        record = blocker.record
+        record_tags = split_tags(getattr(record, "passengers", ""))
+        if record_tags and not (record_tags & tags):
+            continue
+        who = "тех же пассажиров" if record_tags else "неизвестно кого (старая запись)"
+        return (
+            f"Есть незакрытая попытка брони на {who}: {record.status}, "
+            f"{record.started_at}"
+            + (f", бронь {record.booking_number}" if record.booking_number else "")
+            + ". Проверьте брони у перевозчика и снимите блокировку в разделе «Брони»."
+        )
+
+    others = (
+        db.query(Job)
+        .filter(
+            Job.service == Service.AIRLINES.value,
+            Job.status == JobStatus.RUNNING.value,
+            Job.id != job.id,
+        )
+        .all()
+    )
+    for other in others:
+        if _job_tags(other) & tags:
+            return (
+                f"Этих пассажиров уже ищет процесс #{other.id}. Два аккаунта на одних "
+                f"и тех же людей — это две брони и два счёта."
+            )
+    return ""
+
+
 def _parse_time(raw: str) -> dt.datetime | None:
     try:
         return dt.datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
@@ -88,8 +251,11 @@ def sync_from_journal(db, job: Job) -> list[Booking]:
     его повторно при каждом обновлении страницы нельзя.
     """
     started = job.started_at or dt.datetime.min
-    records = [r for r in _guard(job.service).records() if _belongs_to(r, started)]
-    return _import_records(db, records, service=job.service, job_id=job.id)
+    journal = job_journal(job)
+    records = [r for r in journal.guard().records() if _belongs_to(r, started)]
+    return _import_records(
+        db, records, service=job.service, job_id=job.id, provider_id=journal.provider_id
+    )
 
 
 def _belongs_to(record, started: dt.datetime) -> bool:
@@ -114,46 +280,57 @@ def sync_orphan_bookings(db) -> list[Booking]:
     created: list[Booking] = []
 
     for service in Service:
-        if not journal_path(service.value).exists():
-            continue
-
-        # Архив тоже смотрим: там лежат записи, с которых сняли блокировку
-        # (`--force-rebook` или кнопка «разблокировать»). Настоящая бронь
-        # с номером и ссылкой на оплату от этого никуда не делась.
-        guard = _guard(service.value)
-        records = [*guard.records(), *guard.archived()]
-        for record in records:
-            # Процесс мог отработать и завершиться раньше, чем панель дошла
-            # до журнала. Если попытка укладывается в его время, это его бронь —
-            # тогда в письме будет настоящий маршрут, а не «запуск вне панели».
-            owner = _job_around(db, service.value, record.started_at)
-            created.extend(
-                _import_records(db, [record], service=service.value, job_id=owner)
-            )
+        for journal in journals(db, service.value):
+            # Архив тоже смотрим: там лежат записи, с которых сняли блокировку
+            # (`--force-rebook` или кнопка «разблокировать»). Настоящая бронь
+            # с номером и ссылкой на оплату от этого никуда не делась.
+            guard = journal.guard()
+            for record in [*guard.records(), *guard.archived()]:
+                # Процесс мог отработать и завершиться раньше, чем панель дошла
+                # до журнала. Если попытка укладывается в его время, это его
+                # бронь — тогда в письме будет настоящий маршрут.
+                owner = _job_around(
+                    db, service.value, record.started_at, provider_id=journal.provider_id
+                )
+                created.extend(
+                    _import_records(
+                        db,
+                        [record],
+                        service=service.value,
+                        job_id=owner,
+                        provider_id=journal.provider_id,
+                    )
+                )
 
     return created
 
 
-def _job_around(db, service: str, started_at: str) -> int | None:
-    """Процесс того же сервиса, во время которого шла попытка. None — не нашёлся."""
+def _job_around(
+    db, service: str, started_at: str, *, provider_id: int | None = None
+) -> int | None:
+    """
+    Процесс того же сервиса, во время которого шла попытка. None — не нашёлся.
+
+    Если журнал аккаунта — ищем только среди процессов этого аккаунта: при
+    нескольких параллельных процессах по времени подходят сразу несколько.
+    """
     began = _parse_time(started_at)
     if began is None:
         return None
 
-    for job in (
-        db.query(Job)
-        .filter(Job.service == service, Job.started_at.isnot(None))
-        .order_by(Job.started_at.desc())
-        .limit(20)
-        .all()
-    ):
+    query = db.query(Job).filter(Job.service == service, Job.started_at.isnot(None))
+    if provider_id is not None:
+        query = query.filter(Job.provider_id == provider_id)
+    for job in query.order_by(Job.started_at.desc()).limit(20).all():
         finished = job.finished_at or dt.datetime.now()
         if job.started_at <= began <= finished:
             return job.id
     return None
 
 
-def _import_records(db, records, *, service: str, job_id: int | None) -> list[Booking]:
+def _import_records(
+    db, records, *, service: str, job_id: int | None, provider_id: int | None = None
+) -> list[Booking]:
     """
     Перенести записи журнала в таблицу броней. Вернуть те, о которых стоит сообщить.
 
@@ -179,10 +356,11 @@ def _import_records(db, records, *, service: str, job_id: int | None) -> list[Bo
         ):
             # Ровно это уже лежит в базе. Если бронь бесхозная, а процесс её
             # признал — присваиваем, но повторно не рассылаем.
-            if job_id is not None:
-                for row in same_key:
-                    if row.job_id is None:
-                        row.job_id = job_id
+            for row in same_key:
+                if job_id is not None and row.job_id is None:
+                    row.job_id = job_id
+                if provider_id is not None and row.provider_id is None:
+                    row.provider_id = provider_id
             continue
 
         stale = next((row for row in same_key if not row.booking_number), None)
@@ -196,6 +374,8 @@ def _import_records(db, records, *, service: str, job_id: int | None) -> list[Bo
             stale.detail = record.detail
             if job_id is not None and stale.job_id is None:
                 stale.job_id = job_id
+            if provider_id is not None and stale.provider_id is None:
+                stale.provider_id = provider_id
             # Сообщать есть о чём, только если ссылка появилась сейчас.
             if record.form_url and not had_url:
                 touched.append(stale)
@@ -203,6 +383,7 @@ def _import_records(db, records, *, service: str, job_id: int | None) -> list[Bo
 
         booking = Booking(
             job_id=job_id,
+            provider_id=provider_id,
             service=service,
             status=record.status,
             guard_key=record.booking_key,
@@ -326,21 +507,27 @@ def unblock_service(db, service: str, *, guard_key: str = "") -> str:
 
     Записи в панели помечаем снятыми, но не удаляем — история нужна.
     """
-    path = journal_path(service)
-    if not path.exists():
+    found = journals(db, service)
+    if not found:
         return "Журнал броней пуст — блокировки нет"
 
-    guard = _guard(service)
-
+    # Запись может лежать в нескольких журналах (общий скопирован в журнал
+    # первого аккаунта при переезде). Снимать нужно везде, иначе блокировка
+    # вернётся из копии, и человек будет гадать почему.
+    removed = 0
     if guard_key:
-        record = guard.get(guard_key)
-        if record is None:
+        for journal in found:
+            guard = journal.guard()
+            if guard.get(guard_key) is not None:
+                guard.clear(guard_key)
+                removed += 1
+        if not removed:
             return "Такой записи в журнале нет"
-        guard.clear(guard_key)
-        removed = 1
     else:
-        removed = sum(1 for _ in guard.records())
-        guard.clear_all()
+        for journal in found:
+            guard = journal.guard()
+            removed += sum(1 for _ in guard.records())
+            guard.clear_all()
 
     for booking in (
         db.query(Booking)
