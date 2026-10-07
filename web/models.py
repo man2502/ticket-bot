@@ -598,3 +598,35 @@ class TrainingLog(Base):
     ts: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
 
     run: Mapped[TrainingRun] = relationship(back_populates="logs")
+
+
+class ErrorEvent(Base):
+    """
+    Ошибка бота — строка `[err] тип | HTTP … | запрос | подробности` из его вывода.
+
+    Отдельно от job_logs, потому что вопрос к ним другой. Лог отвечает «что
+    происходило в этом процессе», а здесь — «какие ошибки и у какого аккаунта
+    случались за неделю». По логу этого не понять: в нём тысячи строк на процесс,
+    а ошибки разбросаны по десятку форматов.
+
+    Процесс и аккаунт — SET NULL: ошибка переживает удаление и того, и другого,
+    иначе сводка за неделю теряла бы ровно те случаи, после которых что-то удаляли.
+    """
+
+    __tablename__ = "error_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    provider_id: Mapped[int | None] = mapped_column(
+        ForeignKey("providers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    service: Mapped[str] = mapped_column(String(16), default="", index=True)
+    key: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    endpoint: Mapped[str] = mapped_column(String(128), default="")
+    detail: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now, index=True)
+
+    provider: Mapped[Provider | None] = relationship()

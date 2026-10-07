@@ -25,6 +25,7 @@ NAV_ITEMS = [
     {"url": "/bookings", "title": "Брони", "admin_only": False},
     {"url": "/stations", "title": "Справочники", "admin_only": True},
     {"url": "/captcha", "title": "Капчи", "admin_only": True},
+    {"url": "/errors", "title": "Ошибки", "admin_only": True},
     {"url": "/settings", "title": "Настройки", "admin_only": True},
     {"url": "/users", "title": "Пользователи", "admin_only": True},
 ]

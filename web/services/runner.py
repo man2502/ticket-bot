@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -69,7 +70,7 @@ class JobStartError(RuntimeError):
 
 # Боты печатают строки вида «[ok] ...», «[--] ...», «[error] ...».
 # Уровень берём из тега — менять сами боты ради этого не потребовалось.
-_ERROR_TAGS = ("[error]", "[auth]", "[fatal]")
+_ERROR_TAGS = ("[err]", "[error]", "[auth]", "[fatal]")
 _WARN_TAGS = ("[warn]", "[rate-limit]", "[backoff]", "[maintenance]", "[compare] ✗")
 _OK_TAGS = ("[ok]", "[book-railway] booking=", "[book-api] pnr=")
 
@@ -406,6 +407,7 @@ def _pump_output(job_id: int, process: subprocess.Popen) -> None:
             try:
                 with session_scope() as db:
                     db.add(JobLog(job_id=job_id, text=line[:4000], level=classify(line)))
+                    _record_error_event(db, job_id, line)
                 written += 1
                 if written == MAX_LOGS_PER_JOB:
                     with session_scope() as db:
@@ -424,6 +426,51 @@ def _pump_output(job_id: int, process: subprocess.Popen) -> None:
     finally:
         code = process.wait()
         _finish(job_id, code)
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def parse_error_line(line: str) -> dict | None:
+    """
+    Разобрать строку журнала ошибок бота. None — это не такая строка.
+
+        [err] rate_limit | HTTP 429 | customers/info | Retry-After=900с | …
+
+    Подробности могут сами содержать « | » (как у 429), поэтому всё после
+    третьего разделителя — одно поле.
+    """
+    text = _ANSI.sub("", line).strip()
+    if not text.startswith("[err] "):
+        return None
+    parts = [part.strip() for part in text[len("[err] "):].split(" | ", 3)]
+    key = parts[0] if parts and parts[0] else "other"
+    status = None
+    if len(parts) > 1 and parts[1].startswith("HTTP "):
+        try:
+            status = int(parts[1][5:].strip())
+        except ValueError:
+            status = None
+    endpoint = parts[2] if len(parts) > 2 and parts[2] != "—" else ""
+    detail = parts[3] if len(parts) > 3 else (parts[1] if len(parts) == 2 else "")
+    return {"key": key[:32], "status": status, "endpoint": endpoint[:128], "detail": detail[:2000]}
+
+
+def _record_error_event(db, job_id: int, line: str) -> None:
+    from web.models import ErrorEvent
+
+    parsed = parse_error_line(line)
+    if parsed is None:
+        return
+    job = db.get(Job, job_id)
+    db.add(
+        ErrorEvent(
+            job_id=job_id,
+            provider_id=job.provider_id if job else None,
+            service=job.service if job else "",
+            **parsed,
+        )
+    )
 
 
 # 0xC000013A — код, которым Windows завершает процесс по Ctrl+Break, если тот

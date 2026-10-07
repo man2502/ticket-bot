@@ -23,6 +23,7 @@ from web.routes import (
     bookings,
     captcha,
     dashboard,
+    errors,
     jobs,
     passengers,
     settings as settings_routes,
@@ -40,6 +41,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(auth.router)
 app.include_router(dashboard.router)
+app.include_router(errors.router)
 app.include_router(bookings.router)
 app.include_router(captcha.router)
 app.include_router(jobs.router)
@@ -82,6 +84,14 @@ def _on_startup() -> None:
         fixed = recover_training(session)
         if fixed:
             print(f"[training] помечено остановленными после перезапуска: {fixed}")
+
+    # Журнал ошибок держим месяц: сводка смотрит на неделю, остальное — на разбор.
+    from web.services.errors import prune as prune_errors
+
+    with session_scope() as session:
+        removed = prune_errors(session)
+        if removed:
+            print(f"[errors] убрано старых ошибок: {removed}")
 
     # Брони, о которых панель не знает: бота могли запустить из командной строки
     # или панель упала между POST и чтением журнала. Ссылка на оплату лежит

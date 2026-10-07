@@ -76,6 +76,7 @@ from api_env import (
 )
 from api_session import is_auth_forbidden, print_auth_help
 from api_rate_limit import RATE_LIMIT_EXIT_CODE, RateLimitStop, wait_if_paused
+from api_errors import classify_error_text, report_error
 from api_booking import (
     bookings_journal,
     BookingResult,
@@ -1260,7 +1261,7 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
                 headers = build_api_headers()
             break
         except RateLimitStop as exc:
-            print(f"[err] rate_limit_stop | {exc}")
+            report_error("rate_limit_stop", detail=exc, endpoint="auth/login")
             return RATE_LIMIT_EXIT_CODE
         except AuthTransientError as exc:
             # 429 или 5xx на входе. После 429 пауза уже выдержана в api_call,
@@ -1366,6 +1367,11 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
                 )
             except AuthFatalError as exc:
                 print(f"\033[91m[auth] {exc}\033[0m")
+                text = str(exc)
+                report_error(
+                    "auth_login" if "login" in text.lower() else "auth_forbidden",
+                    detail=text,
+                )
                 return 1
             except RateLimitStop:
                 raise
@@ -1373,6 +1379,8 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
                 if isinstance(exc, KeyboardInterrupt):
                     raise
                 print(f"\033[91m[error] {exc}\033[0m — следующий слот {format_slot_ranges()}")
+                report_error(classify_error_text(str(exc)) or "other",
+                             detail=f"{type(exc).__name__}: {exc}")
                 available, items, avail_body = False, [str(exc)], None
 
             counted = count_direct_flights(avail_body) if avail_body is not None else None
@@ -1420,11 +1428,15 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
                         booked = True
                     elif book_result.unknown:
                         # Повторять нельзя: вторая попытка = вторая настоящая бронь.
+                        report_error("booking_unknown", detail=book_result.error,
+                                     endpoint="CreateBooking")
                         return stop_on_unknown_booking(book_result, route)
                     else:
                         print(
                             _red(f"[book-api] бронь не удалась, брони нет: {book_result.error}")
                         )
+                        report_error("booking_failed", detail=book_result.error,
+                                     endpoint="CreateBooking")
                         if prev is not True:
                             notify(
                                 "T5 API: места есть, бронь не удалась",
@@ -1452,6 +1464,11 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
                 hint = items[0] if items else "свободных мест нет"
                 print(_purple(f"[--] {hint}"))
                 err_key = error_key_from_text(hint)
+                if not _is_normal_no_seats_hint(hint):
+                    # 429 уже записан там, где пойман, — с запросом и Retry-After.
+                    journal_key = classify_error_text(hint)
+                    if journal_key and journal_key != "rate_limit":
+                        report_error(journal_key, detail=hint)
                 if err_key == "rate_limit":
                     # Пауза по общей лестнице уже выдержана в api_call.
                     error_tracker.reset_streak()
@@ -1476,7 +1493,7 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
         print("\n[stop] Остановлено пользователем.")
         return 0
     except RateLimitStop as exc:
-        print(f"\033[91m[err] rate_limit_stop | {exc}\033[0m")
+        report_error("rate_limit_stop", detail=exc)
         print("[stop] Повторные 429 — все процессы самолётов остановлены. "
               "Не перезапускайте сразу: это и есть путь к блокировке аккаунта.")
         return RATE_LIMIT_EXIT_CODE

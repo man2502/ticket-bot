@@ -508,3 +508,13 @@ code {
 .provider-card .page-head { margin-bottom: 8px; }
 .provider-card .tag a { color: inherit; }
 .provider-new { border-style: dashed; background: transparent; }
+
+/* -------------------------------------------------------- журнал ошибок */
+
+/* «Только ошибки» в консоли процесса: прячем всё, кроме строк уровня error. */
+.console.errors-only .line:not(.line-error) { display: none; }
+.console-head { gap: 12px; }
+
+.error-hot { color: var(--error); font-weight: 600; }
+.error-filter { margin: 8px 0 12px; flex-wrap: wrap; }
+.error-filter select { width: auto; margin-top: 0; }

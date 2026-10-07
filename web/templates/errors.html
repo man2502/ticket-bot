@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Ошибки{% endblock %}
+
+{% block content %}
+<h1>Ошибки ботов</h1>
+
+<p class="muted small">
+  Сюда попадает каждая строка <code>[err]</code> из вывода процессов. Нужна, чтобы
+  видеть, что происходило с аккаунтом, — например, перед блокировкой. Хранится
+  {{ keep_days }} дней.
+</p>
+
+<h2>Сводка за неделю</h2>
+{% if summary.rows %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Ошибка</th>
+      <th>Всего<br><span class="muted small">24 ч / 7 дн</span></th>
+      {% for column in summary.columns %}
+        <th>{{ column.title }}<br><span class="muted small">24 ч / 7 дн</span></th>
+      {% endfor %}
+      <th>Последняя</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in summary.rows %}
+    <tr>
+      <td><a href="/errors?key={{ row.key }}">{{ row.title }}</a></td>
+      <td class="{{ 'error-hot' if row.total.day else '' }}">
+        <strong>{{ row.total.day }}</strong> / {{ row.total.week }}
+      </td>
+      {% for cell in row.cells %}
+        <td class="{{ 'error-hot' if cell and cell.day else '' }}">
+          {% if cell %}{{ cell.day }} / {{ cell.week }}{% else %}<span class="muted">—</span>{% endif %}
+        </td>
+      {% endfor %}
+      <td class="muted small">{{ row.total.last.strftime('%d.%m %H:%M') if row.total.last else '' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="alert ok">За неделю ошибок не было.</div>
+{% endif %}
+
+<h2>Последние</h2>
+<form method="get" action="/errors" class="inline-form error-filter">
+  <select name="provider">
+    <option value="">Все аккаунты</option>
+    {% for p in providers %}
+      <option value="{{ p.id }}" {% if chosen_provider == p.id %}selected{% endif %}>{{ p.title }}</option>
+    {% endfor %}
+  </select>
+  <select name="key">
+    <option value="">Все ошибки</option>
+    {% for value, title in titles.items() %}
+      <option value="{{ value }}" {% if chosen_key == value %}selected{% endif %}>{{ title }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Показать</button>
+  {% if chosen_provider or chosen_key %}<a href="/errors">сбросить</a>{% endif %}
+</form>
+
+{% if events %}
+<table class="grid">
+  <thead>
+    <tr><th>Когда</th><th>Ошибка</th><th>Аккаунт</th><th>Запрос</th><th>HTTP</th><th>Подробности</th><th>Процесс</th></tr>
+  </thead>
+  <tbody>
+    {% for e in events %}
+    <tr>
+      <td class="muted small">{{ e.created_at.strftime('%d.%m %H:%M:%S') }}</td>
+      <td class="small">{{ titles.get(e.key, e.key) }}</td>
+      <td class="small">{{ e.provider.title if e.provider else '—' }}</td>
+      <td class="small">{{ e.endpoint or '—' }}</td>
+      <td class="small">{{ e.status or '—' }}</td>
+      <td class="small">{{ e.detail }}</td>
+      <td class="small">{% if e.job_id %}<a href="/jobs/{{ e.job_id }}">#{{ e.job_id }}</a>{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="alert info">Ошибок по этому фильтру нет.</div>
+{% endif %}
+{% endblock %}

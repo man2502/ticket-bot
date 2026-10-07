@@ -110,9 +110,14 @@
     <div class="console-head">
       <span>Консоль</span>
       <label class="console-follow">
+        <input type="checkbox" id="errors-only"> только ошибки
+      </label>
+      <label class="console-follow">
         <input type="checkbox" id="follow" checked> прокручивать
       </label>
     </div>
+    {# Фильтр — классом на контейнере, а не перебором строк: новые строки
+       из потока скрываются сами, без отдельной обработки. #}
     <div class="console" id="console">
       {% for log in logs %}
         <div class="line line-{{ log.level }}">
@@ -129,6 +134,10 @@
 (function () {
   const box = document.getElementById('console');
   const follow = document.getElementById('follow');
+  const errorsOnly = document.getElementById('errors-only');
+  errorsOnly.addEventListener('change', () => {
+    box.classList.toggle('errors-only', errorsOnly.checked);
+  });
   const statusEl = document.getElementById('job-status');
 
   // Последняя показанная строка: при переподключении не покажем повторно то,
