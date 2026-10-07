@@ -256,6 +256,36 @@
     </div>
   </form>
 
+  {% if svc.rate_limit %}
+  {% set rl = svc.rate_limit %}
+  <h3 id="rate-limit">Лимит запросов (HTTP 429)</h3>
+  <div class="page-head">
+    <span>Общая пауза для всех аккаунтов — они ходят с одного адреса.</span>
+    <span class="tag {{ rl.tone }}">{{ rl.headline }}</span>
+  </div>
+  <p class="muted small">
+    Лестница: {% for m in rl.ladder %}{{ m }} мин → {% endfor %}стоп всех процессов на час.
+    Если сервер прислал Retry-After больше ступени — ждём сколько он сказал.
+    Ступень опускается на одну за каждый час без 429.
+  </p>
+  <table class="grid">
+    <tbody>
+      <tr><th>Ступень</th><td>{{ rl.level }} из {{ rl.stop_after - 1 }}; следующий 429 → {{ rl.next_step }}</td></tr>
+      {% if rl.last_429_at %}
+      <tr><th>Последний 429</th><td>{{ rl.last_429_at }} — {{ rl.last_source or '—' }}, {{ rl.last_endpoint or '—' }}</td></tr>
+      <tr><th>Retry-After</th><td>{% if rl.last_retry_after is not none %}{{ '%.0f'|format(rl.last_retry_after) }} с{% else %}сервер не прислал{% endif %}</td></tr>
+      <tr><th>Всего 429</th><td>{{ rl.events }}</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+  {% if rl.stopped or rl.pause_left_min %}
+  <form method="post" action="/settings/rate-limit/clear" class="inline-form"
+        onsubmit="return confirm('Снять паузу раньше срока? Если сайт всё ещё режет запросы, это верный путь к блокировке аккаунта.')">
+    <button type="submit" class="secondary-btn">Снять {{ 'стоп' if rl.stopped else 'паузу' }} раньше срока</button>
+  </form>
+  {% endif %}
+  {% endif %}
+
   {% if svc.needs_auth %}
   {# Аккаунты — отдельными формами: вложенные формы HTML не допускает, а общая
      форма заставила бы сохранять все аккаунты разом ради правки одного. #}

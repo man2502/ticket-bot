@@ -75,6 +75,7 @@ from api_env import (
     to_api_date,
 )
 from api_session import is_auth_forbidden, print_auth_help
+from api_rate_limit import RATE_LIMIT_EXIT_CODE, RateLimitStop, wait_if_paused
 from api_booking import (
     bookings_journal,
     BookingResult,
@@ -520,64 +521,6 @@ def is_rate_limited(status: int, body: dict[str, Any] | str) -> bool:
     return False
 
 
-def rate_limit_base_pause_sec() -> float:
-    try:
-        return max(1.0, float(env("API_RATE_LIMIT_PAUSE_SEC", "150") or "150"))
-    except ValueError:
-        return 150.0
-
-
-def rate_limit_repeat_window_sec() -> float:
-    try:
-        return max(1.0, float(env("API_RATE_LIMIT_WINDOW_SEC", "600") or "600"))
-    except ValueError:
-        return 600.0
-
-
-class RateLimitBackoff:
-    """150с, повтор 429 в течение 10 мин после паузы → 300, 600, …"""
-
-    def __init__(self) -> None:
-        self._pause = rate_limit_base_pause_sec()
-        self._repeat_until = 0.0
-
-    def next_delay(self) -> tuple[float, bool]:
-        """(секунды паузы, это повтор в окне)."""
-        now = time.monotonic()
-        base = rate_limit_base_pause_sec()
-        doubled = now < self._repeat_until
-        if doubled:
-            self._pause *= 2.0
-        else:
-            self._pause = base
-        return self._pause, doubled
-
-    def mark_resumed(self) -> None:
-        self._repeat_until = time.monotonic() + rate_limit_repeat_window_sec()
-
-
-_rate_limit_backoff = RateLimitBackoff()
-
-
-def pause_for_rate_limit(*, retry_after: float | None = None, label: str = "") -> None:
-    delay, doubled = _rate_limit_backoff.next_delay()
-    suffix = f" ({label})" if label else ""
-    extra = f", Retry-After={retry_after:.0f}с" if retry_after is not None else ""
-    window_min = rate_limit_repeat_window_sec() / 60.0
-    if doubled:
-        print(
-            f"[rate-limit] Too Many Requests — повтор в течение {window_min:.0f} мин, "
-            f"пауза {delay:.0f}с (x2){extra}{suffix}, затем новый цикл…"
-        )
-    else:
-        print(
-            f"[rate-limit] Too Many Requests — пауза {delay:.0f}с"
-            f"{extra}{suffix}, затем новый цикл…"
-        )
-    time.sleep(delay)
-    _rate_limit_backoff.mark_resumed()
-
-
 def handle_rate_limited(
     *,
     status: int,
@@ -585,11 +528,15 @@ def handle_rate_limited(
     retry_after: float | None,
     label: str,
 ) -> bool:
-    """True — была пауза, нужен новый цикл (свежая капча)."""
+    """
+    True — был 429, нужен новый цикл (свежая капча).
+
+    Пауза здесь больше не выдерживается: её уже выдержал api_call по общей
+    лестнице (core.rate_limit). Вторая пауза поверх подняла бы ступень дважды.
+    """
     if not is_rate_limited(status, body):
         return False
     _log_api_response(label=label, status=status, body=body)
-    pause_for_rate_limit(retry_after=retry_after, label=label)
     return True
 
 
@@ -1307,13 +1254,25 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
     secrets_file = api_secrets_env_path()
     headers: dict[str, str] | None = None
 
-    try:
-        if ensure_api_session(env_path=secrets_file):
-            headers = build_api_headers()
-    except Exception as exc:  # noqa: BLE001
-        if not tokens_configured():
-            raise SystemExit(f"[auth] не удалось получить токены: {exc}") from exc
-        print(f"[auth] предупреждение: {exc} — использую токены из env")
+    for attempt in range(1, 6):
+        try:
+            if ensure_api_session(env_path=secrets_file):
+                headers = build_api_headers()
+            break
+        except RateLimitStop as exc:
+            print(f"[err] rate_limit_stop | {exc}")
+            return RATE_LIMIT_EXIT_CODE
+        except AuthTransientError as exc:
+            # 429 или 5xx на входе. После 429 пауза уже выдержана в api_call,
+            # после 5xx ждём сами — и пробуем снова, а не падаем.
+            print(f"[auth] {exc} — повтор входа {attempt}/5")
+            wait_if_paused(label="auth/login")
+            time.sleep(30)
+        except Exception as exc:  # noqa: BLE001
+            if not tokens_configured():
+                raise SystemExit(f"[auth] не удалось получить токены: {exc}") from exc
+            print(f"[auth] предупреждение: {exc} — использую токены из env")
+            break
 
     if not headers:
         headers = build_api_headers()
@@ -1408,6 +1367,8 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
             except AuthFatalError as exc:
                 print(f"\033[91m[auth] {exc}\033[0m")
                 return 1
+            except RateLimitStop:
+                raise
             except (Exception, KeyboardInterrupt) as exc:
                 if isinstance(exc, KeyboardInterrupt):
                     raise
@@ -1491,7 +1452,10 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
                 hint = items[0] if items else "свободных мест нет"
                 print(_purple(f"[--] {hint}"))
                 err_key = error_key_from_text(hint)
-                if err_key == "maintenance":
+                if err_key == "rate_limit":
+                    # Пауза по общей лестнице уже выдержана в api_call.
+                    error_tracker.reset_streak()
+                elif err_key == "maintenance":
                     pause_for_maintenance(hint)
                     error_tracker.reset_streak()
                 elif err_key:
@@ -1511,6 +1475,11 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
     except KeyboardInterrupt:
         print("\n[stop] Остановлено пользователем.")
         return 0
+    except RateLimitStop as exc:
+        print(f"\033[91m[err] rate_limit_stop | {exc}\033[0m")
+        print("[stop] Повторные 429 — все процессы самолётов остановлены. "
+              "Не перезапускайте сразу: это и есть путь к блокировке аккаунта.")
+        return RATE_LIMIT_EXIT_CODE
     finally:
         # Письма уходят в фоне — дождаться их до выхода из процесса, иначе
         # демон-поток умрёт вместе с ним и ссылка на оплату потеряется.

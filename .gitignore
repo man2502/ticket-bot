@@ -62,3 +62,6 @@ mitmweb-flows/
 captcha_model_api.candidate.*
 captcha_model_api.prev.*
 *.pt.tmp
+
+# --- лестница пауз после 429 (запуск из командной строки) ---
+api_rate_limit.json

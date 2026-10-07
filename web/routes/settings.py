@@ -21,6 +21,8 @@ from web.services.notifications import (
     sms_configured,
     smtp_configured,
 )
+from web.services.rate_limit import clear as clear_rate_limit
+from web.services.rate_limit import status_view as rate_limit_status
 from web.services.providers import (
     ProviderError,
     delete_provider,
@@ -74,6 +76,7 @@ def _page(
         view["needs_auth"] = service == Service.AIRLINES
         view["has_captcha"] = service == Service.AIRLINES
         view["providers"] = providers_view(db, service.value) if view["needs_auth"] else []
+        view["rate_limit"] = rate_limit_status() if view["needs_auth"] else None
         services.append(view)
 
     return render(
@@ -266,6 +269,16 @@ async def _provider_form(request: Request) -> dict[str, object]:
         # Флажок приходит в форме, только если отмечен.
         "is_enabled": "is_enabled" in raw,
     }
+
+
+@router.post("/rate-limit/clear")
+def rate_limit_clear(
+    request: Request,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Снять стоп после 429 раньше срока — только по решению человека."""
+    return _page(request, user, db, message=clear_rate_limit())
 
 
 @router.post("/providers")

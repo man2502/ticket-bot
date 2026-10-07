@@ -22,8 +22,9 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+for _path in (str(REPO_ROOT), str(REPO_ROOT / "airlines_api")):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 
 # --------------------------------------------------------------------------- #
@@ -668,3 +669,89 @@ def test_pages_are_registered_as_routes() -> None:
     for router in (jobs.router, settings.router):
         names = endpoints(router).values()
         assert not any(name.startswith("_") for name in names), names
+
+
+# --------------------------------------------------------------------------- #
+# Лимит запросов (429)
+# --------------------------------------------------------------------------- #
+
+
+def _stop_now() -> None:
+    """Довести общую лестницу до стопа, как это сделали бы боты."""
+    from core import rate_limit as rl
+    from web.services.rate_limit import state_path
+
+    now = rl.time.time()
+    for _ in range(rl.STOP_AFTER):
+        decision = rl.register_429(state_path(), retry_after=None, now=now)
+        now = rl.read_state(state_path()).until + 1 if not decision.stop else now
+
+
+def test_all_providers_share_one_rate_limit_file(db) -> None:
+    """Все аккаунты ходят с одного адреса — 429 у одного означает паузу для всех."""
+    from web.services.bot_env import prepare_launch
+
+    first, second = _provider(db, "Первый"), _provider(db, "Второй")
+    a = _env_values(prepare_launch(db, _job(db, doc="AA1", provider=first)).env_file)
+    b = _env_values(prepare_launch(db, _job(db, doc="AA2", provider=second)).env_file)
+
+    assert a["API_RATE_LIMIT_STATE"] == b["API_RATE_LIMIT_STATE"]
+    assert a["API_PROVIDER_NAME"] == "Первый"
+
+
+def test_start_is_refused_while_stopped(db) -> None:
+    """Перезапуск сразу после стопа — прямой путь к блокировке аккаунта."""
+    from web.services.runner import JobStartError, start_job
+
+    _provider(db, "Первый")
+    _stop_now()
+
+    with pytest.raises(JobStartError) as exc:
+        start_job(db, _job(db))
+    assert "429" in str(exc.value)
+
+
+def test_clear_allows_start_again(db) -> None:
+    from web.services.rate_limit import clear, start_blocker
+
+    _stop_now()
+    assert start_blocker()
+    clear()
+    assert start_blocker() == ""
+
+
+def test_stop_is_announced_once_for_all_processes(db, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Процессы останавливаются вместе, и каждый выходит с кодом 3. Письмо о стопе
+    должно прийти одно, а не по одному от каждого процесса.
+    """
+    import web.services.notifications as notifications
+    from web.services.runner import _notify_rate_limit_stop
+
+    sent = []
+    monkeypatch.setattr(
+        notifications,
+        "send_email",
+        lambda db, *, to, subject, body: sent.append(subject)
+        or notifications.SendResult(ok=True, channel="email", recipient=to),
+    )
+    monkeypatch.setattr(notifications, "send_sms", lambda db, **k: None)
+
+    _stop_now()
+    first, second = _provider(db, "Первый"), _provider(db, "Второй")
+    _notify_rate_limit_stop(db, _job(db, doc="AA1", provider=first))
+    _notify_rate_limit_stop(db, _job(db, doc="AA2", provider=second))
+
+    assert len(sent) == 1
+    assert "429" in sent[0]
+
+
+def test_exit_code_3_is_a_rate_limit_stop() -> None:
+    from web.services.runner import _EXIT_MEANING, RATE_LIMIT_EXIT_CODE
+
+    import api_rate_limit
+
+    assert RATE_LIMIT_EXIT_CODE == api_rate_limit.RATE_LIMIT_EXIT_CODE
+    status, message = _EXIT_MEANING[RATE_LIMIT_EXIT_CODE]
+    assert status == "failed"
+    assert "429" in message

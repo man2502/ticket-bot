@@ -30,6 +30,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from core.http import HttpClient, RequestFailed, Response, ResultUnknown  # noqa: E402
 from api_env import current_ios_user_agent, env  # noqa: E402
+from api_rate_limit import is_rate_limited_response, on_429, wait_if_paused  # noqa: E402
 
 __all__ = [
     "api_request",
@@ -135,6 +136,14 @@ def api_call(
     Нужно там, где настоящее приложение шлёт не iOS-строку: вход в личный
     кабинет оно делает клиентом на Dart, и подмена там заметна.
     """
+    # Неидемпотентный запрос — это CreateBooking. Перед ним пауза уже
+    # выдержана в переборе рейсов, ДО записи попытки в журнал: ждать или
+    # останавливаться между записью pending и самим POST нельзя.
+    booking = idempotent is False
+    if not booking:
+        # Общая пауза после 429 — в том числе пойманного другим процессом.
+        wait_if_paused(label=path)
+
     request_headers = dict(headers)
     if rotate_user_agent:
         request_headers["user-agent"] = current_ios_user_agent()
@@ -142,13 +151,29 @@ def api_call(
         request_headers.setdefault("user-agent", current_ios_user_agent())
     request_headers.setdefault("host", api_host())
 
-    return get_client().request(
+    response = get_client().request(
         method,
         path,
         headers=request_headers,
         body=body,
         idempotent=idempotent,
     )
+
+    if is_rate_limited_response(response.status, response.text):
+        on_429(
+            endpoint=path,
+            status=response.status,
+            retry_after=response.retry_after,
+            source=env("API_PROVIDER_NAME") or _masked_phone(),
+            wait=not booking,
+        )
+    return response
+
+
+def _masked_phone() -> str:
+    """Чей аккаунт поймал 429 — без полного номера в общем файле."""
+    phone = env("API_CUSTOMER_PHONE")
+    return f"…{phone[-4:]}" if len(phone) >= 4 else ""
 
 
 def api_request(

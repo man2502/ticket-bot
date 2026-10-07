@@ -31,6 +31,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from core.booking_guard import AlreadySettled, BookingGuard, booking_key, passenger_tags
+from api_rate_limit import wait_if_paused
 from core.term import green
 from api_client import RequestFailed, ResultUnknown, api_call
 from api_env import env, to_api_date
@@ -704,6 +705,13 @@ def parse_booking_response(
             error=f"HTTP {status}, состояние брони неизвестно: {_short(body)}",
         )
 
+    if status == 429:
+        # Лимит запросов: сервер отказал, не приняв запрос в работу. Это
+        # достоверный отказ — брони нет. Без этой ветки тело-страница
+        # «Too Many Requests» попадало в «ответ не JSON» и считалось
+        # «бронь под вопросом», а это остановка поиска и ручная проверка.
+        return BookingResult(ok=False, error="HTTP 429 — лимит запросов, бронь не создана")
+
     if not isinstance(body, dict):
         return BookingResult(ok=False, unknown=True, error=f"ответ не JSON: {_short(body)}")
 
@@ -887,6 +895,9 @@ def try_auto_book(
 
     last: BookingResult | None = None
     for position, flight in enumerate(candidates, start=1):
+        # Общая пауза после 429 — ДО записи попытки в журнал. Сам CreateBooking
+        # не ждёт и не останавливается: между pending и POST этого делать нельзя.
+        wait_if_paused(label="CreateBooking")
         if verbose and len(candidates) > 1:
             print(
                 f"[book-api] рейс {position}/{len(candidates)}: "

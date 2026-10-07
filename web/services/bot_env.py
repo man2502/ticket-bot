@@ -174,6 +174,8 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
         provider_state_path,
     )
 
+    from web.services.rate_limit import state_path as rate_limit_state_path
+
     config = get_service_config(db, Service.AIRLINES.value)
     params = job.params
     contact_email, contact_phone = booking_contacts(db, job)
@@ -216,6 +218,11 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
         "API_STATE_FILE": provider_state_path(provider.id),
         # Картинка капчи — своя у запуска: иначе один процесс решал бы чужую.
         "API_CAPTCHA_IMAGE": passengers_file.parent / "captcha_last.png",
+        # Лестница пауз после 429 — ОДНА на все процессы самолётов: все они
+        # ходят с одного адреса, и 429 у одного аккаунта — пауза для всех.
+        "API_RATE_LIMIT_STATE": rate_limit_state_path(),
+        # Чей аккаунт поймал 429 — для журнала ошибок и письма о стопе.
+        "API_PROVIDER_NAME": provider.title,
         "API_AUTO_BOOK": "1" if config.auto_book else "0",
         "API_RATE_LIMIT_PAUSE_SEC": config.rate_limit_pause_sec,
         "API_REPEATED_ERROR_PAUSE_AFTER": config.repeated_error_pause_after,

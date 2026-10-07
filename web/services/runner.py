@@ -286,6 +286,13 @@ def start_job(db, job: Job) -> None:
     if contact_problem:
         raise JobStartError(contact_problem)
 
+    if job.service == Service.AIRLINES.value:
+        from web.services.rate_limit import start_blocker as rate_limit_blocker
+
+        stopped = rate_limit_blocker()
+        if stopped:
+            raise JobStartError(stopped)
+
     # Незакрытая попытка брони в журнале — бот при запуске остановится сам.
     # Говорим об этом заранее, иначе процесс просто завершится через секунду,
     # и человек будет гадать, почему.
@@ -432,7 +439,15 @@ _EXIT_MEANING = {
         "Проверьте брони у перевозчика ПЕРЕД повторным запуском.",
     ),
     130: (JobStatus.STOPPED.value, "Остановлен"),
+    # Пятый 429 по общей лестнице: остановлены все процессы самолётов.
+    3: (
+        JobStatus.FAILED.value,
+        "Остановлен после повторных 429 вместе со всеми процессами самолётов. "
+        "Не перезапускайте сразу — это и есть путь к блокировке аккаунта.",
+    ),
 }
+
+RATE_LIMIT_EXIT_CODE = 3
 
 
 def _finish(job_id: int, code: int) -> None:
@@ -465,8 +480,60 @@ def _finish(job_id: int, code: int) -> None:
             db.commit()
 
             _collect_bookings(db, job)
+            if code == RATE_LIMIT_EXIT_CODE and not stopped_by_human:
+                _notify_rate_limit_stop(db, job)
     except Exception as exc:  # noqa: BLE001
         print(f"[runner] job {job_id}: не записал итог: {exc}")
+
+
+def _notify_rate_limit_stop(db, job: Job) -> None:
+    """
+    Сообщить человеку о стопе после 429. Один раз на стоп, а не от каждого процесса.
+
+    Процессы останавливаются вместе, и каждый выходит с кодом 3 — без этой
+    проверки пришло бы столько писем, сколько было процессов.
+    """
+    from web.services.notifications import notify_booking
+    from web.services.rate_limit import status_view, stop_notice_key
+    from web.services.settings import get_setting, save_settings
+
+    key = stop_notice_key()
+    if not key or get_setting(db, "rate_limit_notified") == key:
+        return
+    save_settings(db, {"rate_limit_notified": key})
+
+    view = status_view()
+    retry = (
+        f"{view['last_retry_after']:.0f} с" if view["last_retry_after"] is not None else "не прислал"
+    )
+    subject = "Самолёты остановлены: повторные 429"
+    body = "\n".join(
+        [
+            "Сайт перевозчика несколько раз ответил «слишком много запросов» (HTTP 429).",
+            "Все процессы самолётов остановлены, чтобы аккаунты не заблокировали.",
+            "",
+            f"Стоп: {view['headline']}",
+            f"Последний 429: {view['last_429_at']}, аккаунт {view['last_source'] or '—'}, "
+            f"запрос {view['last_endpoint'] or '—'}",
+            f"Retry-After от сервера: {retry}",
+            "",
+            "Не перезапускайте процессы раньше времени.",
+        ]
+    )
+    try:
+        results = notify_booking(
+            db, subject=subject, body=body, sms_text=f"{subject}. {view['headline']}"
+        )
+    except Exception as exc:  # noqa: BLE001 — уведомление не должно ронять итог процесса
+        db.add(JobLog(job_id=job.id, level=LogLevel.ERROR.value,
+                      text=f"Уведомление о стопе не ушло: {exc}"))
+        db.commit()
+        return
+    for result in results:
+        db.add(JobLog(job_id=job.id,
+                      level=LogLevel.OK.value if result.ok else LogLevel.ERROR.value,
+                      text=f"Уведомление о стопе — {result.channel}: {result.summary()}"))
+    db.commit()
 
 
 def _collect_bookings(db, job: Job) -> None:

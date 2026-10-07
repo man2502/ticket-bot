@@ -160,6 +160,19 @@ def _auth_request(
     return response.status, response.body  # type: ignore[return-value]
 
 
+def _raise_if_rate_limited(status: int, endpoint: str) -> None:
+    """
+    429 на входе — не повод останавливать процесс.
+
+    Раньше это было AuthFatalError: процесс падал, его перезапускали, и он
+    сразу шёл логиниться снова. Частые входы после 429 — самое подозрительное,
+    что можно показать сайту. Пауза по общей лестнице уже выдержана в api_call,
+    здесь только пропускаем цикл.
+    """
+    if status == 429:
+        raise AuthTransientError(f"{endpoint} http 429 — вход отложен до следующего цикла")
+
+
 def _login_error(status: int, body: Any, login: str, password: str) -> str:
     """
     Понятное объяснение отказа на auth/login.
@@ -292,6 +305,7 @@ def refresh_app_token(
         headers=_client_login_headers(),
         body={"login": ios_login, "password": password},
     )
+    _raise_if_rate_limited(status, "auth/login")
     if status != 200:
         raise AuthFatalError(_login_error(status, body, ios_login, password))
 
@@ -329,6 +343,7 @@ def refresh_customer_token(
         # и общая ротация iOS-строки затёрла бы его.
         rotate_user_agent=False,
     )
+    _raise_if_rate_limited(status, "customers/auth/login")
     if status != 200:
         raise AuthFatalError(f"customers/auth/login → HTTP {status}: {body}")
 
