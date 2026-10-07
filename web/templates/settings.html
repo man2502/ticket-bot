@@ -205,7 +205,8 @@
     <h3>Ограничители</h3>
     <div class="field-grid">
       {{ text_field('max_searches_per_hour', 'Поисков в час', svc.max_searches_per_hour, '0 — без лимита') }}
-      {{ text_field('rate_limit_pause_sec', 'Пауза после 429, сек', svc.rate_limit_pause_sec, 'Не меньше 30') }}
+      {# Поля «Пауза после 429» больше нет: поездной бот его никогда не читал,
+         а у самолётов пауза идёт по лестнице — см. «Лимит запросов» ниже. #}
       {{ text_field('repeated_error_pause_after', 'Пауза после N одинаковых ошибок',
                     svc.repeated_error_pause_after) }}
       {% if svc.needs_auth %}

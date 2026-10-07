@@ -224,7 +224,6 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
         # Чей аккаунт поймал 429 — для журнала ошибок и письма о стопе.
         "API_PROVIDER_NAME": provider.title,
         "API_AUTO_BOOK": "1" if config.auto_book else "0",
-        "API_RATE_LIMIT_PAUSE_SEC": config.rate_limit_pause_sec,
         "API_REPEATED_ERROR_PAUSE_AFTER": config.repeated_error_pause_after,
         # Капча: процесс не ждёт человека. Нерешённые уходят в раздел «Капчи».
         "CAPTCHA_API_MANUAL": "1" if config.captcha_manual else "0",
