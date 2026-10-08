@@ -158,6 +158,17 @@ def test_endpoint_is_taken_from_network_error_text() -> None:
     assert parse_error_line(line)["endpoint"] == "customers/info"
 
 
+def test_status_is_taken_from_hint_text() -> None:
+    """Подсказка цикла несёт код только текстом — он должен попасть в колонку HTTP."""
+    from web.services.runner import parse_error_line
+
+    assert parse_error_line(_bot_line(key="error_search",
+                                      detail="Error Search (HTTP 400)"))["status"] == 400
+    assert parse_error_line(_bot_line(key="network", detail="timed out"))["status"] is None
+    assert parse_error_line(_bot_line(key="other", detail="HTTP 404",
+                                      status=502))["status"] == 502
+
+
 def test_explicit_endpoint_wins() -> None:
     from web.services.runner import parse_error_line
 

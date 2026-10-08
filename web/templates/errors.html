@@ -74,7 +74,8 @@
       <td class="small">{{ titles.get(e.key, e.key) }}</td>
       <td class="small">{{ e.provider.title if e.provider else '—' }}</td>
       <td class="small">{{ e.endpoint or '—' }}</td>
-      <td class="small">{{ e.status or '—' }}</td>
+      {# Сетевая ошибка — ответа не было вовсе, кода быть не может. #}
+      <td class="small">{% if e.status %}{{ e.status }}{% elif e.key == 'network' %}<span class="muted">нет ответа</span>{% else %}—{% endif %}</td>
       <td class="small">{{ e.detail }}</td>
       <td class="small">{% if e.job_id %}<a href="/jobs/{{ e.job_id }}">#{{ e.job_id }}</a>{% else %}—{% endif %}</td>
     </tr>

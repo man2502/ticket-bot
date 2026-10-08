@@ -44,6 +44,7 @@ def report_error(key: str, *, detail: object = "", status: int | None = None,
     """Напечатать строку журнала ошибок. Неизвестный тип становится `other`."""
     key = key if key in ERROR_KEYS else "other"
     endpoint = endpoint or endpoint_from_text(detail)
+    status = status or status_from_text(detail)
     status_part = f"HTTP {status}" if status else "—"
     print(f"[err] {key} | {status_part} | {_clean(endpoint) or '—'} | {_clean(detail)}")
 
@@ -55,6 +56,15 @@ def endpoint_from_text(text: object) -> str:
     """Запрос из текста сетевой ошибки: «POST /api/v1/GetAirAvailability (…)» → GetAirAvailability."""
     match = _ENDPOINT_RE.search(str(text or ""))
     return match.group(1) if match else ""
+
+
+_STATUS_RE = re.compile(r"\bHTTP (\d{3})\b")
+
+
+def status_from_text(text: object) -> int | None:
+    """Код ответа из подсказки цикла: «Error Search (HTTP 400)» → 400."""
+    match = _STATUS_RE.search(str(text or ""))
+    return int(match.group(1)) if match else None
 
 
 def classify_error_text(text: str) -> str | None:
