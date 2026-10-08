@@ -52,7 +52,7 @@ from core.slots import (
 )
 from core.booking_guard import BookingGuard
 from core.state import load_json, save_json
-from api_client import ResultUnknown, api_request, warmup_connection
+from api_client import RequestFailed, ResultUnknown, api_request, warmup_connection
 from api_auth import (
     AuthFatalError,
     AuthTransientError,
@@ -1359,6 +1359,9 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
                     "[auth-debug] запрос: customer="
                     f"{_token_preview(headers.get('x-customer-authorization', ''))}"
                 )
+            # Ошибка, уже записанная в журнал, ниже приходит ещё раз как подсказка
+            # цикла — без флага каждая попадала в «Ошибки» дважды.
+            error_reported = False
             try:
                 available, items, avail_body = run_check_once(
                     headers,
@@ -1379,8 +1382,11 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
                 if isinstance(exc, KeyboardInterrupt):
                     raise
                 print(f"\033[91m[error] {exc}\033[0m — следующий слот {format_slot_ranges()}")
-                report_error(classify_error_text(str(exc)) or "other",
-                             detail=f"{type(exc).__name__}: {exc}")
+                # У сетевых ошибок текст и так говорит всё; имя класса только
+                # путает: ResultUnknown на поиске — не «бронь под вопросом».
+                detail = str(exc) if isinstance(exc, RequestFailed) else f"{type(exc).__name__}: {exc}"
+                report_error(classify_error_text(str(exc)) or "other", detail=detail)
+                error_reported = True
                 available, items, avail_body = False, [str(exc)], None
 
             counted = count_direct_flights(avail_body) if avail_body is not None else None
@@ -1464,7 +1470,7 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
                 hint = items[0] if items else "свободных мест нет"
                 print(_purple(f"[--] {hint}"))
                 err_key = error_key_from_text(hint)
-                if not _is_normal_no_seats_hint(hint):
+                if not error_reported and not _is_normal_no_seats_hint(hint):
                     # 429 уже записан там, где пойман, — с запросом и Retry-After.
                     journal_key = classify_error_text(hint)
                     if journal_key and journal_key != "rate_limit":

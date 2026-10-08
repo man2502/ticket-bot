@@ -134,6 +134,8 @@ def test_ordinary_lines_are_ignored() -> None:
         ("captcha failed", "captcha_failed"),
         ("403 forbidden", "auth_forbidden"),
         ("сеть: timeout", "network"),
+        # Так пишет ssl при зависшем ответе — раньше уходило в «прочее».
+        ("POST /api/v1/GetAirAvailability (20012 мс): The read operation timed out", "network"),
         ("HTTP 502 bad gateway", "http_5xx"),
         ("сервис на профилактике", "maintenance"),
         ("что-то невиданное", "other"),
@@ -143,6 +145,24 @@ def test_error_text_is_classified(text: str, key: str) -> None:
     from api_errors import classify_error_text
 
     assert classify_error_text(text) == key
+
+
+def test_endpoint_is_taken_from_network_error_text() -> None:
+    """Сетевая ошибка приходит текстом — запрос всё равно должен попасть в колонку."""
+    from web.services.runner import parse_error_line
+
+    line = _bot_line(key="network", detail="POST /api/v1/GetAirAvailability (20012 мс, "
+                                            "попытка 1): The read operation timed out")
+    assert parse_error_line(line)["endpoint"] == "GetAirAvailability"
+    line = _bot_line(key="network", detail="сеть: GET /api/v1/customers/info (3014 мс): timed out")
+    assert parse_error_line(line)["endpoint"] == "customers/info"
+
+
+def test_explicit_endpoint_wins() -> None:
+    from web.services.runner import parse_error_line
+
+    line = _bot_line(key="network", detail="GET /api/v1/customers/info: x", endpoint="auth/login")
+    assert parse_error_line(line)["endpoint"] == "auth/login"
 
 
 # --------------------------------------------------------------------------- #

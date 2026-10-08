@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import re
+
 __all__ = ["ERROR_KEYS", "report_error", "classify_error_text"]
 
 ERROR_KEYS = {
@@ -41,8 +43,18 @@ def report_error(key: str, *, detail: object = "", status: int | None = None,
                  endpoint: str = "") -> None:
     """Напечатать строку журнала ошибок. Неизвестный тип становится `other`."""
     key = key if key in ERROR_KEYS else "other"
+    endpoint = endpoint or endpoint_from_text(detail)
     status_part = f"HTTP {status}" if status else "—"
     print(f"[err] {key} | {status_part} | {_clean(endpoint) or '—'} | {_clean(detail)}")
+
+
+_ENDPOINT_RE = re.compile(r"/api/v1/([\w/.-]+)")
+
+
+def endpoint_from_text(text: object) -> str:
+    """Запрос из текста сетевой ошибки: «POST /api/v1/GetAirAvailability (…)» → GetAirAvailability."""
+    match = _ENDPOINT_RE.search(str(text or ""))
+    return match.group(1) if match else ""
 
 
 def classify_error_text(text: str) -> str | None:
@@ -66,7 +78,7 @@ def classify_error_text(text: str) -> str | None:
         return "captcha_failed"
     if "forbidden" in raw or "403" in raw or "401" in raw:
         return "auth_forbidden"
-    if "сеть" in raw or "timeout" in raw or "таймаут" in raw or "connection" in raw:
+    if any(word in raw for word in ("сеть", "timeout", "timed out", "таймаут", "connection")):
         return "network"
     if any(code in raw for code in ("http 500", "http 502", "http 503", "http 504", " 5xx")):
         return "http_5xx"
