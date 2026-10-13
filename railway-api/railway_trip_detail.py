@@ -89,8 +89,17 @@ def find_seats_for_trip(
     if not ids:
         return None
 
+    last_error: TripDetailError | None = None
     for wid in ids:
-        detail = fetch_trip_detail(trip_id, wagon_type_id_param=wid)
+        try:
+            detail = fetch_trip_detail(trip_id, wagon_type_id_param=wid)
+        except TripDetailError as exc:
+            # Ошибка по одному типу (чаще всего boardingNotFound — мест в нём
+            # уже нет) не повод бросать остальные: Kupe пуст, а VIP Kupe есть.
+            last_error = exc
+            if verbose and len(ids) > 1:
+                print(f"[railway] {wagon_type_label(wid)} ({wid}) — {exc}, дальше…")
+            continue
         journeys = trip_detail_journeys(detail)
         if not journeys:
             if verbose and len(ids) > 1:
@@ -105,4 +114,8 @@ def find_seats_for_trip(
             return wid, journey, seats
         if verbose and len(ids) > 1:
             print(f"[railway] {wagon_type_label(wid)} ({wid}) — нет подходящих мест, дальше…")
+    if last_error is not None:
+        # Ни один тип не дал мест, и хотя бы один — ошибку: её и показываем,
+        # иначе в логе было бы безликое «нет свободных мест».
+        raise last_error
     return None

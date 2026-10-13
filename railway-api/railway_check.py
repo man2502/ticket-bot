@@ -75,6 +75,7 @@ from railway_trips import (
     train_run_number,
     train_selector_label,
     train_time,
+    trip_wagon_ids_with_seats,
     wagon_type_ids,
 )
 
@@ -477,7 +478,12 @@ def try_book_available_trip(
     # Всё до этой точки — только GET. Ошибка здесь означает, что POST не был
     # отправлен, то есть брони точно нет и можно пробовать следующий рейс.
     try:
-        resolved = find_seats_for_trip(trip_id, len(passengers), verbose=verbose)
+        resolved = find_seats_for_trip(
+            trip_id,
+            len(passengers),
+            wagon_ids=trip_wagon_ids_with_seats(trip),
+            verbose=verbose,
+        )
     except (TripDetailError, TripsError, RequestFailed) as exc:
         return BookingResult(ok=False, error=f"детали рейса {trip_id}: {exc}")
 

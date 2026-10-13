@@ -317,6 +317,20 @@ def trip_resolved_wagon_id(trip: dict[str, Any]) -> int | None:
     return None
 
 
+def trip_wagon_ids_with_seats(trip: dict[str, Any]) -> list[int]:
+    """
+    Типы из WAGON_TYPE_ID (в их порядке), где, по списку рейсов, есть места.
+
+    Деталь рейса по типу без мест сервер не отдаёт вовсе — отвечает ошибкой
+    `roundtrip.boardingNotFound`. Спрашивать его о таких типах незачем.
+    Если в рейсе нет сведений о вагонах — все настроенные типы, как раньше.
+    """
+    configured = wagon_type_ids()
+    if not isinstance(trip.get("wagon_types"), list):
+        return configured
+    return [wid for wid in configured if _trip_wagon_has_seats(trip, wid)]
+
+
 def trip_has_seats(trip: dict[str, Any], *, wanted_wagon_id: int | None = None) -> bool:
     if wanted_wagon_id is not None:
         return _trip_wagon_has_seats(trip, wanted_wagon_id)
