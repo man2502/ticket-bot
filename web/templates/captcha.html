@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon, empty %}
 {% block title %}Капчи{% endblock %}
 
 {% block content %}
@@ -12,7 +13,7 @@
   <div class="alert error">Не удалось прочитать датасет: {{ broken }}</div>
 {% endif %}
 
-<p class="muted small">
+<p class="page-sub">
   Сюда попадает то, что модель не смогла решить. Процесс поиска при этом
   не ждёт человека — он просто берёт новую капчу. Размеченное идёт в обучающую
   выборку.
@@ -21,19 +22,23 @@
 {% if counters %}
 <div class="cards">
   <div class="card {% if counters.rejected %}card-alert{% endif %}">
-    <div class="card-value">{{ counters.rejected }}</div>
+    <span class="card-icon warn">{{ icon('alert') }}</span>
+    <div class="card-value num">{{ counters.rejected }}</div>
     <div class="card-label">ошибок модели</div>
   </div>
   <div class="card">
-    <div class="card-value">{{ counters.unlabeled }}</div>
+    <span class="card-icon">{{ icon('inbox') }}</span>
+    <div class="card-value num">{{ counters.unlabeled }}</div>
     <div class="card-label">без кода</div>
   </div>
   <div class="card">
-    <div class="card-value">{{ counters.hard }}</div>
+    <span class="card-icon info">{{ icon('edit') }}</span>
+    <div class="card-value num">{{ counters.hard }}</div>
     <div class="card-label">размечено вручную</div>
   </div>
   <div class="card">
-    <div class="card-value">{{ counters.confirmed }}</div>
+    <span class="card-icon ok">{{ icon('check') }}</span>
+    <div class="card-value num">{{ counters.confirmed }}</div>
     <div class="card-label">принято сервером</div>
   </div>
 </div>
@@ -58,7 +63,7 @@
       <input type="hidden" name="name" value="{{ item.name }}">
       <input name="code" inputmode="numeric" autocomplete="off"
              maxlength="{{ digits }}" placeholder="{{ digits }} цифр" required>
-      <button type="submit">Сохранить</button>
+      <button type="submit" title="Сохранить код" aria-label="Сохранить код">{{ icon('check') }}</button>
     </form>
 
     <form method="post" action="/captcha/discard" class="captcha-form"
@@ -70,10 +75,9 @@
   {% endfor %}
 </div>
 {% elif not broken %}
-<div class="alert info">
-  Нечего размечать — модель справляется. Картинки появятся здесь, когда
-  сервер отвергнет её вариант.
-</div>
+  <div style="margin-top: 20px">
+  {{ empty('check', 'Нечего размечать', 'Модель справляется. Картинки появятся здесь, когда сервер отвергнет её вариант.') }}
+  </div>
 {% endif %}
 
 
@@ -85,17 +89,20 @@
 
 <div class="cards">
   <div class="card">
+    <span class="card-icon ok">{{ icon('cpu') }}</span>
     <div class="card-value">
       {% if training.model.accuracy_percent is defined %}{{ '%.0f'|format(training.model.accuracy_percent) }}%{% else %}—{% endif %}
     </div>
     <div class="card-label">точность рабочей модели</div>
   </div>
   <div class="card">
-    <div class="card-value">{{ training.model.samples or '—' }}</div>
+    <span class="card-icon">{{ icon('scan') }}</span>
+    <div class="card-value num">{{ training.model.samples or '—' }}</div>
     <div class="card-label">капч в обучении</div>
   </div>
   <div class="card {% if training.samples_new %}card-alert{% endif %}">
-    <div class="card-value">
+    <span class="card-icon info">{{ icon('plus') }}</span>
+    <div class="card-value num">
       {% if training.samples_new is none %}—{% else %}{{ training.samples_new }}{% endif %}
     </div>
     <div class="card-label">
@@ -148,7 +155,7 @@
         <input name="epochs" type="number" min="1" max="1000" value="100" class="narrow">
       </label>
       <button type="submit" {% if not training.can_start %}disabled{% endif %}>
-        Дообучить модель
+        {{ icon('cpu') }}Дообучить модель
       </button>
     </form>
   {% endif %}
@@ -184,9 +191,8 @@
 
 <div class="console" id="train-console">
   {% for log in training.logs %}
-    <div class="line line-{{ log.level }}" data-id="{{ log.id }}">
-      <span class="ts">{{ log.ts.strftime('%H:%M:%S') }}</span>{{ log.text }}
-    </div>
+    {# Одной строкой: консоль сохраняет пробелы, и отступы шаблона стали бы пустыми строками. #}
+        <div class="line line-{{ log.level }}" data-id="{{ log.id }}"><span class="ts">{{ log.ts.strftime('%H:%M:%S') }}</span>{{ log.text }}</div>
   {% else %}
     <div class="line line-info"><span class="ts">—</span>Вывода пока нет</div>
   {% endfor %}
@@ -239,6 +245,7 @@
 
 {% if recent %}
 <h2>Последняя разметка</h2>
+<div class="table-wrap">
 <table class="grid">
   <thead>
     <tr><th>Когда</th><th>Было у модели</th><th>Правильный код</th><th>Итог</th></tr>
@@ -260,5 +267,6 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endif %}
 {% endblock %}

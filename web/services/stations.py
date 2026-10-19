@@ -256,6 +256,20 @@ def sync_all(db) -> list[SyncResult]:
     return [sync_service(db, service.value) for service in Service]
 
 
+def title_map(db) -> dict[str, dict[str, str]]:
+    """
+    Названия станций для списков: {сервис: {код: название}}.
+
+    В процессе маршрут хранится кодами (17 → 32, ASB → MYP) — человеку они
+    ничего не говорят. Неизвестный код шаблон покажет как есть.
+    """
+    names: dict[str, dict[str, str]] = {service.value: {} for service in Service}
+    for station in db.query(Station).all():
+        title = station.title_ru or station.title_en or station.external_id
+        names.setdefault(station.service, {})[station.external_id] = title
+    return names
+
+
 def ensure_stations(db, *, verbose: bool = True) -> None:
     """
     Первичное наполнение: тянем справочник, только если он пуст.

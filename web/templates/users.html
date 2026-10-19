@@ -1,13 +1,19 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}Пользователи{% endblock %}
 
 {% block content %}
 <h1>Пользователи</h1>
+<p class="page-sub">
+  Пользователь может вести список пассажиров и запускать процессы поиска.
+  Настройки, справочники, капчи и разблокировка броней — только у админа.
+</p>
 
 {% if error %}
   <div class="alert error">{{ error }}</div>
 {% endif %}
 
+<div class="table-wrap">
 <table class="grid">
   <thead>
     <tr>
@@ -17,22 +23,26 @@
   <tbody>
     {% for u in users %}
     <tr>
-      <td>{{ u.login }}</td>
+      <td>
+        <div class="cluster" style="flex-wrap: nowrap">
+          <span class="avatar">{{ u.login[:1] }}</span>{{ u.login }}
+        </div>
+      </td>
       <td><span class="role role-{{ u.role }}">{{ 'админ' if u.is_admin else 'пользователь' }}</span></td>
-      <td>{{ 'активен' if u.is_active else 'заблокирован' }}</td>
+      <td><span class="tag {{ 'tag-ok' if u.is_active else 'tag-error' }}">{{ 'активен' if u.is_active else 'заблокирован' }}</span></td>
       <td class="muted">
         {{ u.last_login_at.strftime('%d.%m.%Y %H:%M') if u.last_login_at else '—' }}
       </td>
       <td>
         <form method="post" action="/users/{{ u.id }}/password" class="inline-form">
           <input name="password" type="password" placeholder="новый пароль" required minlength="8">
-          <button type="submit">Сменить</button>
+          <button type="submit" class="secondary-btn">Сменить</button>
         </form>
       </td>
       <td>
         {% if u.id != user.id %}
         <form method="post" action="/users/{{ u.id }}/toggle" class="inline-form">
-          <button type="submit" class="{{ 'danger' if u.is_active else '' }}">
+          <button type="submit" class="{{ 'secondary-btn' if u.is_active else '' }}">
             {{ 'Заблокировать' if u.is_active else 'Разблокировать' }}
           </button>
         </form>
@@ -45,9 +55,10 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 
 <h2>Добавить пользователя</h2>
-<form method="post" action="/users/create" class="form-row">
+<form method="post" action="/users/create" class="form-row panel">
   <label>
     Логин
     <input name="login" required>
@@ -63,11 +74,6 @@
       <option value="admin">админ</option>
     </select>
   </label>
-  <button type="submit">Создать</button>
+  <button type="submit">{{ icon('plus') }}Создать</button>
 </form>
-
-<p class="muted">
-  Пользователь может вести список пассажиров и запускать процессы поиска.
-  Настройки, справочники, капчи и разблокировка броней — только у админа.
-</p>
 {% endblock %}

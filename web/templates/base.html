@@ -1,35 +1,112 @@
-{# Общий каркас страницы: шапка с навигацией и место под содержимое. #}
+{# Общий каркас страницы: боковое меню и место под содержимое. #}
+{% from "_macros.html" import icon %}
 <!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Панель билетов{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <title>{% block title %}Панель билетов{% endblock %} · Билеты</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M8 12h16v3a2 2 0 0 0 0 4v3H8v-3a2 2 0 0 0 0-4z' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
+  {# Тема — до отрисовки, иначе тёмная тема мигнёт светлой при каждом переходе. #}
+  <script>
+    try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
 </head>
 <body>
+{% include "_icons.html" %}
+
 {% if user %}
-<header class="topbar">
-  <a class="brand" href="/">Билеты</a>
-  <nav>
-    {% for item in nav_items %}
-      {# Подсветка активного раздела: точное совпадение или вложенный путь. #}
-      <a href="{{ item.url }}"
-         class="{% if current_path == item.url or current_path.startswith(item.url ~ '/') %}active{% endif %}">
-        {{ item.title }}
-      </a>
-    {% endfor %}
-  </nav>
-  <div class="user-box">
-    <span class="login">{{ user.login }}</span>
-    <span class="role role-{{ user.role }}">{{ 'админ' if user.is_admin else 'пользователь' }}</span>
-    <a class="logout" href="/logout">Выйти</a>
-  </div>
-</header>
+<div class="app">
+  <header class="mobilebar">
+    <button type="button" class="ghost icon-btn" data-nav-toggle aria-label="Меню">{{ icon('menu') }}</button>
+    <a class="brand" href="/"><span class="brand-mark">{{ icon('ticket') }}</span>Билеты</a>
+  </header>
+  <div class="scrim" data-nav-toggle></div>
+
+  <aside class="sidebar">
+    <a class="brand" href="/"><span class="brand-mark">{{ icon('ticket') }}</span>Билеты</a>
+
+    {% set ns = namespace(group='') %}
+    <nav>
+      {% for item in nav_items %}
+        {% if item.group != ns.group %}
+          {% set ns.group = item.group %}
+          {% if item.group %}<div class="nav-label">{{ item.group }}</div>{% endif %}
+        {% endif %}
+        {# Подсветка активного раздела: точное совпадение или вложенный путь.
+           «Обзор» — только точное: иначе он горел бы на любой странице. #}
+        {% set active = current_path == item.url or (item.url != '/' and current_path.startswith(item.url ~ '/')) %}
+        <a href="{{ item.url }}" class="nav-link{% if active %} active{% endif %}"
+           {% if active %}aria-current="page"{% endif %}>
+          {{ icon(item.icon) }}<span>{{ item.title }}</span>
+        </a>
+      {% endfor %}
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="user-chip">
+        <span class="avatar">{{ user.login[:1] }}</span>
+        <span class="who">
+          <span class="login">{{ user.login }}</span>
+          <span class="muted small">{{ 'администратор' if user.is_admin else 'пользователь' }}</span>
+        </span>
+      </div>
+      <div class="sidebar-actions">
+        <button type="button" class="secondary-btn btn-sm" data-theme-toggle title="Тема">
+          <span data-theme-icon>{{ icon('moon', 'icon-sm') }}</span><span data-theme-label>Тёмная</span>
+        </button>
+        <a class="button-link secondary btn-sm" href="/logout" title="Выйти">{{ icon('logout', 'icon-sm') }}Выйти</a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="{% block main_class %}container{% endblock %}">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+{% else %}
+<main class="{{ self.main_class() }}">
+  {{ self.content() }}
+</main>
 {% endif %}
 
-<main class="{% block main_class %}container{% endblock %}">
-  {% block content %}{% endblock %}
-</main>
+<script>
+(function () {
+  // Мобильное меню.
+  document.querySelectorAll('[data-nav-toggle]').forEach((el) =>
+    el.addEventListener('click', () => document.body.classList.toggle('nav-open')));
+
+  // Переключатель темы: запоминаем выбор, по умолчанию — как в системе.
+  const root = document.documentElement;
+  const isDark = () => root.dataset.theme
+    ? root.dataset.theme === 'dark'
+    : window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const paint = () => {
+    const label = document.querySelector('[data-theme-label]');
+    const iconBox = document.querySelector('[data-theme-icon] use');
+    if (!label) return;
+    label.textContent = isDark() ? 'Светлая' : 'Тёмная';
+    if (iconBox) iconBox.setAttribute('href', isDark() ? '#i-sun' : '#i-moon');
+  };
+  const toggle = document.querySelector('[data-theme-toggle]');
+  if (toggle) toggle.addEventListener('click', () => {
+    root.dataset.theme = isDark() ? 'light' : 'dark';
+    try { localStorage.setItem('theme', root.dataset.theme); } catch (e) {}
+    paint();
+  });
+  paint();
+
+  // Строка таблицы с data-href открывается кликом по любому месту, кроме
+  // ссылок, кнопок и полей внутри неё.
+  document.addEventListener('click', (event) => {
+    const row = event.target.closest('tr[data-href]');
+    if (!row || event.target.closest('a, button, input, select, textarea, label, form')) return;
+    window.location.href = row.dataset.href;
+  });
+})();
+</script>
 </body>
 </html>

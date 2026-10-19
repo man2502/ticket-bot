@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}{{ 'Пассажир' if passenger else 'Новый пассажир' }}{% endblock %}
 
 {% macro field(name, label, value, hint='', type='text', required=false) %}
@@ -18,8 +19,10 @@
 
 {% block content %}
 <div class="page-head">
-  <h1>{{ 'Изменить пассажира' if passenger else 'Новый пассажир' }}</h1>
-  <a class="button-link secondary" href="/passengers">К списку</a>
+  <div class="stack">
+    <a href="/passengers" class="small">{{ icon('back', 'icon-sm') }} Пассажиры</a>
+    <h1>{{ 'Изменить пассажира' if passenger else 'Новый пассажир' }}</h1>
+  </div>
 </div>
 
 {% if error %}
@@ -30,7 +33,7 @@
       action="{{ '/passengers/' ~ passenger.id if passenger else '/passengers/new' }}"
       class="card-form">
 
-  <h2>Как в паспорте</h2>
+  <h2 class="cluster">{{ icon('users') }}Как в паспорте</h2>
   <div class="field-grid">
     {{ field('last_name', 'Фамилия', form.last_name, 'Латиницей: TEST', required=true) }}
     {{ field('first_name', 'Имя', form.first_name, 'Латиницей: ANVAR', required=true) }}
@@ -47,14 +50,14 @@
     </label>
   </div>
 
-  <h2>Документ</h2>
+  <h3 class="cluster">{{ icon('key') }}Документ</h3>
   <div class="field-grid">
     {{ field('doc_number', 'Номер документа', form.doc_number, 'Без пробелов: AA1234567', required=true) }}
     {{ field('doc_expdt', 'Действителен до', form.doc_expdt, 'ДД.ММ.ГГГГ, необязательно') }}
     {{ field('citizenship', 'Гражданство', form.citizenship, 'Код страны: TM') }}
   </div>
 
-  <h2>Тариф и контакты</h2>
+  <h3 class="cluster">{{ icon('mail') }}Тариф и контакты</h3>
   <div class="field-grid">
     <label class="{% if form.errors.get('pax_type') %}has-error{% endif %}">
       Тип пассажира
@@ -78,7 +81,7 @@
   </div>
 
   <div class="form-actions">
-    <button type="submit">{{ 'Сохранить' if passenger else 'Добавить' }}</button>
+    <button type="submit">{{ icon('check') }}{{ 'Сохранить' if passenger else 'Добавить' }}</button>
     <a class="button-link secondary" href="/passengers">Отмена</a>
   </div>
 </form>

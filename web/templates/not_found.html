@@ -1,8 +1,9 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon, empty %}
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<h1>{{ title }}</h1>
-{% if note %}<div class="alert error">{{ note }}</div>{% endif %}
-<p><a class="button-link secondary" href="{{ back_url }}">Назад</a></p>
+{% call empty('search', title, note or '') %}
+  <a class="button-link secondary" href="{{ back_url }}">{{ icon('back') }}Назад</a>
+{% endcall %}
 {% endblock %}

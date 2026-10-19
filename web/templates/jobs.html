@@ -1,14 +1,16 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon, status_badge, service_chip, empty %}
 {% block title %}Процессы{% endblock %}
 
 {% block content %}
 <div class="page-head">
   <h1>Процессы</h1>
   <div class="row-actions">
-    <a class="button-link" href="/jobs/new?service=railway">Поезд</a>
-    <a class="button-link" href="/jobs/new?service=airlines">Самолёт</a>
+    <a class="button-link secondary" href="/jobs/new?service=railway">{{ icon('train') }}Поезд</a>
+    <a class="button-link" href="/jobs/new?service=airlines">{{ icon('plane') }}Самолёт</a>
   </div>
 </div>
+<p class="page-sub">Поиски мест: каждый проверяет рейсы по расписанию и бронирует, как только места появятся.</p>
 
 {# У поездов очередь одна на сервис, у самолётов — на аккаунт. Баннер
    появляется, только когда запустить новый действительно нельзя. #}
@@ -29,26 +31,31 @@
 {% endfor %}
 
 {% if jobs %}
+<div class="table-wrap">
 <table class="grid">
   <thead>
     <tr>
-      <th>#</th><th>Сервис</th><th>Маршрут</th><th>Дата</th>
-      <th>Аккаунт</th><th>Пассажиры</th><th>Статус</th><th>Создан</th>
+      <th>Маршрут</th><th>Дата</th><th>Статус</th>
+      <th>Аккаунт</th><th>Пассажиры</th><th>Создан</th>
     </tr>
   </thead>
   <tbody>
     {% for job in jobs %}
-    <tr>
-      <td><a href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
-      <td>{{ service_titles[job.service] }}</td>
-      <td>{{ job.source }} → {{ job.destination }}</td>
-      <td>{{ job.depart_date }}</td>
+    {% set names = station_names.get(job.service, {}) %}
+    <tr data-href="/jobs/{{ job.id }}">
+      <td>
+        <div class="stack">
+          <a href="/jobs/{{ job.id }}">{{ names.get(job.source, job.source) }} → {{ names.get(job.destination, job.destination) }}</a>
+          <span class="muted small">{{ service_chip(job.service, service_titles[job.service]) }} · #{{ job.id }}</span>
+        </div>
+      </td>
+      <td class="nowrap">{{ job.depart_date }}</td>
+      <td>{{ status_badge(job.status) }}</td>
       <td class="small">
         {% if job.provider %}{{ job.provider.title }}{% elif job.service == 'airlines' %}<span class="muted">любой</span>{% else %}<span class="muted">—</span>{% endif %}
       </td>
-      <td class="small">{{ job.passengers|length }}</td>
-      <td><span class="status status-{{ job.status }}">{{ job.status }}</span></td>
-      <td class="muted small">
+      <td class="small num">{{ job.passengers|length }}</td>
+      <td class="muted small nowrap">
         {{ job.created_at.strftime('%d.%m %H:%M') }}
         {% if user.is_admin and job.user %}<div>{{ job.user.login }}</div>{% endif %}
       </td>
@@ -56,10 +63,11 @@
     {% endfor %}
   </tbody>
 </table>
-{% else %}
-<div class="alert info">
-  Процессов пока нет. Создайте поиск по <a href="/jobs/new?service=railway">поезду</a>
-  или <a href="/jobs/new?service=airlines">самолёту</a>.
 </div>
+{% else %}
+  {% call empty('activity', 'Процессов пока нет', 'Создайте поиск по поезду или самолёту — панель будет проверять места сама.') %}
+    <a class="button-link" href="/jobs/new?service=airlines">{{ icon('plane') }}Самолёт</a>
+    <a class="button-link secondary" href="/jobs/new?service=railway">{{ icon('train') }}Поезд</a>
+  {% endcall %}
 {% endif %}
 {% endblock %}

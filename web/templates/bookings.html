@@ -1,8 +1,10 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon, service_chip, empty %}
 {% block title %}Брони{% endblock %}
 
 {% block content %}
 <h1>Брони</h1>
+<p class="page-sub">Созданные брони и ссылки на оплату. Оплату проводите на сайте банка сами — панель только доводит до ссылки.</p>
 
 {% if message %}
   <div class="alert {{ 'error' if is_error else 'ok' }}">{{ message }}</div>
@@ -12,9 +14,9 @@
    по этому сервису не запустится. #}
 {% for blocker in blockers %}
 <section class="card-form blocker">
-  <h2>{{ blocker.title }}: автобронь заблокирована</h2>
+  <h2>{{ icon('lock') }}{{ blocker.title }}: автобронь заблокирована</h2>
 
-  <table class="grid">
+  <table class="grid kv">
     <tbody>
       <tr><th>Состояние</th><td>{{ status_titles.get(blocker.record.status, blocker.record.status) }}</td></tr>
       <tr><th>Начата</th><td>{{ blocker.record.started_at }}</td></tr>
@@ -28,7 +30,7 @@
       <tr><th>Номер брони</th><td>{{ blocker.record.booking_number }}</td></tr>
       {% endif %}
       {% if blocker.record.form_url %}
-      <tr><th>Оплата</th><td><a href="{{ blocker.record.form_url }}" target="_blank" rel="noopener">{{ blocker.record.form_url }}</a></td></tr>
+      <tr><th>Оплата</th><td><a class="button-link btn-sm" href="{{ blocker.record.form_url }}" target="_blank" rel="noopener">{{ icon('external') }}Открыть оплату</a></td></tr>
       {% endif %}
       {% if blocker.record.detail %}
       <tr><th>Детали</th><td class="small">{{ blocker.record.detail }}</td></tr>
@@ -59,7 +61,7 @@
       Впишите «{{ unblock_word }}», чтобы подтвердить
       <input name="confirm" placeholder="{{ unblock_word }}" autocomplete="off">
     </label>
-    <button type="submit" class="danger">Снять блокировку</button>
+    <button type="submit" class="danger">{{ icon('lock') }}Снять блокировку</button>
   </form>
   {% else %}
   <p class="muted small">Снять блокировку может только администратор.</p>
@@ -69,10 +71,11 @@
 
 {% if bookings %}
 <h2>История</h2>
+<div class="table-wrap">
 <table class="grid">
   <thead>
     <tr>
-      <th>Когда</th><th>Процесс</th><th>Сервис</th><th>Аккаунт</th><th>Рейс</th><th>Состояние</th>
+      <th>Когда</th><th>Процесс</th><th>Сервис</th><th>Аккаунт</th><th style="min-width: 240px">Рейс</th><th>Состояние</th>
       <th>Номер</th><th>Оплата</th><th>Уведомление</th><th></th>
     </tr>
   </thead>
@@ -89,7 +92,7 @@
           <span class="muted small" title="Запуск вне панели или поиск удалён">без процесса</span>
         {% endif %}
       </td>
-      <td class="small">{{ service_titles.get(b.service, b.service) }}</td>
+      <td class="small">{{ service_chip(b.service, service_titles.get(b.service, b.service)) }}</td>
       {# Аккаунт, на который оформлена бронь: платить и отменять — в нём. #}
       <td class="small">{{ b.provider.title if b.provider else '—' }}</td>
       {# Рейс и время: по маршруту и дате не понять, утренний это рейс
@@ -100,10 +103,10 @@
           {{ status_titles.get(b.status, b.status) }}
         </span>
       </td>
-      <td class="small">{{ b.booking_number or '—' }}</td>
+      <td>{% if b.booking_number %}<code>{{ b.booking_number }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td class="small">
         {% if b.payment_url %}
-          <a href="{{ b.payment_url }}" target="_blank" rel="noopener">открыть</a>
+          <a class="button-link btn-sm" href="{{ b.payment_url }}" target="_blank" rel="noopener">{{ icon('external') }}Оплатить</a>
         {% else %}
           <span class="muted">—</span>
         {% endif %}
@@ -123,7 +126,7 @@
       <td>
         {% if b.payment_url %}
         <form method="post" action="/bookings/{{ b.id }}/resend" class="inline-form">
-          <button type="submit" class="secondary-btn">Отправить снова</button>
+          <button type="submit" class="secondary-btn btn-sm" title="Отправить ссылку на оплату ещё раз">{{ icon('send') }}Ещё раз</button>
         </form>
         {% endif %}
       </td>
@@ -131,14 +134,8 @@
     {% endfor %}
   </tbody>
 </table>
-
-<p class="muted small">
-  Оплату проводите на сайте банка сами — панель только доводит до ссылки.
-</p>
-{% elif not blockers %}
-<div class="alert info">
-  Броней пока нет. Они появятся здесь после того, как процесс поиска найдёт
-  места и оформит бронь.
 </div>
+{% elif not blockers %}
+  {{ empty('ticket', 'Броней пока нет', 'Они появятся здесь, когда процесс поиска найдёт места и оформит бронь.') }}
 {% endif %}
 {% endblock %}

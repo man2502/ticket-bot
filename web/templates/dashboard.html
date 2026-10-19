@@ -1,69 +1,136 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon, status_badge, service_chip, empty %}
 {% block title %}Обзор{% endblock %}
 
-{% block content %}
-<h1>Обзор</h1>
+{% macro route(job) -%}
+  {{ station_names.get(job.service, {}).get(job.source, job.source) }}
+  <span class="muted">→</span>
+  {{ station_names.get(job.service, {}).get(job.destination, job.destination) }}
+{%- endmacro %}
 
-<div class="cards">
-  <div class="card">
-    <div class="card-value">{{ stats.jobs_active }}</div>
-    <div class="card-label">процессов в работе</div>
-  </div>
-  <div class="card">
-    <div class="card-value">{{ stats.jobs_total }}</div>
-    <div class="card-label">процессов всего</div>
-  </div>
-  <div class="card">
-    <div class="card-value">{{ stats.passengers }}</div>
-    <div class="card-label">пассажиров</div>
-  </div>
-  {# Этот показатель важнее остальных: бронь под вопросом требует, чтобы
-     человек сходил в личный кабинет и проверил, не создалась ли лишняя. #}
-  <div class="card {% if stats.needs_review %}card-alert{% endif %}">
-    <div class="card-value">{{ stats.needs_review }}</div>
-    <div class="card-label">броней под вопросом</div>
+{% block content %}
+<div class="page-head">
+  <h1>Здравствуйте, {{ user.login }}</h1>
+  <div class="row-actions">
+    <a class="button-link secondary" href="/jobs/new?service=railway">{{ icon('train') }}Поезд</a>
+    <a class="button-link" href="/jobs/new?service=airlines">{{ icon('plus') }}Новый поиск</a>
   </div>
 </div>
 
-<h2>Справочники</h2>
-<table class="grid">
-  <thead>
-    <tr><th>Сервис</th><th>Записей</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Самолёты</td>
-      <td>{{ stations.airlines }}{% if not stations.airlines %} <span class="muted">— не синхронизировано</span>{% endif %}</td>
-    </tr>
-    <tr>
-      <td>Поезда</td>
-      <td>{{ stations.railway }}{% if not stations.railway %} <span class="muted">— не синхронизировано</span>{% endif %}</td>
-    </tr>
-  </tbody>
-</table>
-
-<h2>Последние процессы</h2>
-{% if recent_jobs %}
-<table class="grid">
-  <thead>
-    <tr>
-      <th>#</th><th>Сервис</th><th>Маршрут</th><th>Дата</th><th>Статус</th><th>Создан</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for job in recent_jobs %}
-    <tr>
-      <td>{{ job.id }}</td>
-      <td>{{ 'самолёт' if job.service == 'airlines' else 'поезд' }}</td>
-      <td>{{ job.source }} → {{ job.destination }}</td>
-      <td>{{ job.depart_date }}</td>
-      <td><span class="status status-{{ job.status }}">{{ job.status }}</span></td>
-      <td class="muted">{{ job.created_at.strftime('%d.%m %H:%M') }}</td>
-    </tr>
+{# Сначала — то, что требует человека: пока это висит, новый поиск не запустится. #}
+{% if review_jobs or blocked_services %}
+<section class="panel blocker" style="margin-bottom: 20px">
+  <h2>{{ icon('alert') }}Требует внимания</h2>
+  <ul class="list-plain">
+    {% for job in review_jobs %}
+    <li class="attention-item">
+      {{ icon('clock') }}
+      <span class="spacer">
+        <strong>Бронь под вопросом</strong> — процесс #{{ job.id }}, {{ route(job) }}, {{ job.depart_date }}.
+        Проверьте личный кабинет перевозчика перед повторным запуском.
+      </span>
+      <a class="button-link secondary btn-sm" href="/jobs/{{ job.id }}">Открыть</a>
+    </li>
     {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<div class="alert info">Процессов пока нет.</div>
+    {% for service in blocked_services %}
+    <li class="attention-item">
+      {{ icon('lock') }}
+      <span class="spacer">
+        <strong>{{ 'Самолёты' if service == 'airlines' else 'Поезда' }}: автобронь заблокирована</strong>
+        незакрытой попыткой брони.
+      </span>
+      <a class="button-link secondary btn-sm" href="/bookings">К броням</a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
 {% endif %}
+
+<div class="cards">
+  <a class="card" href="/jobs">
+    <span class="card-icon info">{{ icon('activity') }}</span>
+    <span class="card-value num">{{ stats.jobs_active }}</span>
+    <span class="card-label">процессов в работе</span>
+  </a>
+  <a class="card" href="/bookings">
+    <span class="card-icon ok">{{ icon('check') }}</span>
+    <span class="card-value num">{{ stats.booked }}</span>
+    <span class="card-label">завершены с бронью</span>
+  </a>
+  {# Этот показатель важнее остальных: бронь под вопросом требует, чтобы
+     человек сходил в личный кабинет и проверил, не создалась ли лишняя. #}
+  <a class="card {% if stats.needs_review %}card-alert{% endif %}" href="/jobs">
+    <span class="card-icon warn">{{ icon('alert') }}</span>
+    <span class="card-value num">{{ stats.needs_review }}</span>
+    <span class="card-label">броней под вопросом</span>
+  </a>
+  <a class="card" href="/passengers">
+    <span class="card-icon">{{ icon('users') }}</span>
+    <span class="card-value num">{{ stats.passengers }}</span>
+    <span class="card-label">пассажиров</span>
+  </a>
+</div>
+
+<div class="two-col" style="margin-top: 24px">
+  <section>
+    <div class="section-head mt-0">
+      <h2>Последние процессы</h2>
+      <a href="/jobs" class="small">Все процессы →</a>
+    </div>
+    {% if recent_jobs %}
+    <div class="table-wrap">
+      <table class="grid">
+        <thead>
+          <tr><th>Маршрут</th><th>Дата</th><th>Статус</th></tr>
+        </thead>
+        <tbody>
+          {% for job in recent_jobs %}
+          <tr data-href="/jobs/{{ job.id }}">
+            <td>
+              <div class="stack">
+                <span>{{ route(job) }}</span>
+                <span class="muted small">{{ service_chip(job.service) }} · #{{ job.id }}</span>
+              </div>
+            </td>
+            <td class="nowrap">{{ job.depart_date }}</td>
+            <td>{{ status_badge(job.status) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      {% call empty('activity', 'Процессов пока нет', 'Создайте первый поиск — панель будет проверять места сама.') %}
+        <a class="button-link" href="/jobs/new?service=airlines">{{ icon('plane') }}Самолёт</a>
+        <a class="button-link secondary" href="/jobs/new?service=railway">{{ icon('train') }}Поезд</a>
+      {% endcall %}
+    {% endif %}
+  </section>
+
+  <section>
+    <div class="section-head mt-0"><h2>Быстрые действия</h2></div>
+    <div class="quick-actions">
+      <a class="quick-action" href="/jobs/new?service=airlines"><span class="card-icon">{{ icon('plane') }}</span>Поиск рейса</a>
+      <a class="quick-action" href="/jobs/new?service=railway"><span class="card-icon">{{ icon('train') }}</span>Поиск поезда</a>
+      <a class="quick-action" href="/passengers/new"><span class="card-icon ok">{{ icon('users') }}</span>Добавить пассажира</a>
+      <a class="quick-action" href="/bookings"><span class="card-icon info">{{ icon('ticket') }}</span>Брони и оплата</a>
+    </div>
+
+    <div class="section-head"><h2>Справочники</h2>{% if user.is_admin %}<a href="/stations" class="small">Открыть →</a>{% endif %}</div>
+    <div class="panel">
+      <ul class="list-plain">
+        {% for service, title, icon_name in (('airlines', 'Аэропорты', 'plane'), ('railway', 'Станции', 'train')) %}
+        <li class="cluster">
+          {{ icon(icon_name) }}<span class="spacer">{{ title }}</span>
+          {% if stations[service] %}
+            <span class="tag tag-ok num">{{ stations[service] }}</span>
+          {% else %}
+            <span class="tag tag-warn">не загружены</span>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+</div>
 {% endblock %}

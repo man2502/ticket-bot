@@ -1,10 +1,13 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}Вход{% endblock %}
 {% block main_class %}login-page{% endblock %}
 
 {% block content %}
 <form class="login-card" method="post" action="/login">
-  <h1>Панель билетов</h1>
+  <div class="brand"><span class="brand-mark">{{ icon('ticket') }}</span>Билеты</div>
+  <h1>Вход в панель</h1>
+  <p class="muted small">Поиск и бронирование билетов</p>
 
   {% if error %}
     <div class="alert error">{{ error }}</div>

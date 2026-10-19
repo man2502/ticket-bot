@@ -1,19 +1,24 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon, empty %}
 {% block title %}Пассажиры{% endblock %}
 
 {% block content %}
 <div class="page-head">
   <h1>Пассажиры</h1>
-  <a class="button-link" href="/passengers/new">Добавить</a>
+  <a class="button-link" href="/passengers/new">{{ icon('plus') }}Добавить</a>
 </div>
 
 <form class="search" method="get" action="/passengers">
-  <input name="q" value="{{ query }}" placeholder="Имя, фамилия или номер документа">
-  <button type="submit">Найти</button>
-  {% if query %}<a class="button-link secondary" href="/passengers">Сбросить</a>{% endif %}
+  <label class="search-field">
+    {{ icon('search') }}
+    <input name="q" value="{{ query }}" placeholder="Имя, фамилия или номер документа" aria-label="Поиск">
+  </label>
+  <button type="submit" class="secondary-btn">Найти</button>
+  {% if query %}<a class="button-link ghost" href="/passengers">{{ icon('x') }}Сбросить</a>{% endif %}
 </form>
 
 {% if passengers %}
+<div class="table-wrap">
 <table class="grid">
   <thead>
     <tr>
@@ -27,10 +32,15 @@
   </thead>
   <tbody>
     {% for p in passengers %}
-    <tr>
+    <tr data-href="/passengers/{{ p.id }}">
       <td>
-        <a href="/passengers/{{ p.id }}">{{ p.last_name }} {{ p.first_name }}</a>
-        {% if p.note %}<div class="muted small">{{ p.note }}</div>{% endif %}
+        <div class="cluster" style="flex-wrap: nowrap">
+          <span class="avatar">{{ p.first_name[:1] }}{{ p.last_name[:1] }}</span>
+          <span class="stack">
+            <a href="/passengers/{{ p.id }}">{{ p.last_name }} {{ p.first_name }}</a>
+            {% if p.note %}<span class="muted small">{{ p.note }}</span>{% endif %}
+          </span>
+        </div>
       </td>
       <td>{{ p.dob }}</td>
       <td>
@@ -42,7 +52,7 @@
         {% endif %}
       </td>
       <td>
-        {{ p.doc_number }}
+        <code>{{ p.doc_number }}</code>
         {% if p.doc_expdt %}<div class="muted small">до {{ p.doc_expdt }}</div>{% endif %}
       </td>
       <td class="small">
@@ -50,31 +60,34 @@
         {% if p.email %}<div class="muted">{{ p.email }}</div>{% endif %}
         {% if not p.phone and not p.email %}<span class="muted">—</span>{% endif %}
       </td>
-      <td class="row-actions">
-        <a class="button-link secondary" href="/passengers/{{ p.id }}">Изменить</a>
-        {% if user.is_admin %}
-        <form method="post" action="/passengers/{{ p.id }}/delete" class="inline-form"
-              onsubmit="return confirm('Удалить {{ p.last_name }} {{ p.first_name }}?')">
-          <button type="submit" class="danger">Удалить</button>
-        </form>
-        {% endif %}
+      <td>
+        <div class="row-actions">
+          <a class="button-link ghost icon-btn" href="/passengers/{{ p.id }}" title="Изменить" aria-label="Изменить">{{ icon('edit') }}</a>
+          {% if user.is_admin %}
+          <form method="post" action="/passengers/{{ p.id }}/delete" class="inline-form"
+                onsubmit="return confirm('Удалить {{ p.last_name }} {{ p.first_name }}?')">
+            <button type="submit" class="ghost icon-btn" title="Удалить" aria-label="Удалить">{{ icon('trash') }}</button>
+          </form>
+          {% endif %}
+        </div>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+</div>
 
-<p class="muted small">
+<p class="muted small" style="margin-top: 12px">
   Тип пассажира без явного указания считается от даты рейса при создании
   процесса: младенец до 5 лет, ребёнок до 18.
 </p>
 {% else %}
-<div class="alert info">
   {% if query %}
-    По запросу «{{ query }}» ничего не найдено.
+    {{ empty('search', 'Ничего не найдено', 'По запросу «' ~ query ~ '» пассажиров нет.') }}
   {% else %}
-    Список пуст. <a href="/passengers/new">Добавьте первого пассажира.</a>
+    {% call empty('users', 'Пассажиров пока нет', 'Добавьте людей, для которых будете искать билеты.') %}
+      <a class="button-link" href="/passengers/new">{{ icon('plus') }}Добавить пассажира</a>
+    {% endcall %}
   {% endif %}
-</div>
 {% endif %}
 {% endblock %}

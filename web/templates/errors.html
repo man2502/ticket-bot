@@ -1,10 +1,11 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon, empty %}
 {% block title %}Ошибки{% endblock %}
 
 {% block content %}
 <h1>Ошибки ботов</h1>
 
-<p class="muted small">
+<p class="page-sub">
   Сюда попадает каждая строка <code>[err]</code> из вывода процессов. Нужна, чтобы
   видеть, что происходило с аккаунтом, — например, перед блокировкой. Хранится
   {{ keep_days }} дней.
@@ -12,6 +13,7 @@
 
 <h2>Сводка за неделю</h2>
 {% if summary.rows %}
+<div class="table-wrap">
 <table class="grid">
   <thead>
     <tr>
@@ -40,6 +42,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <div class="alert ok">За неделю ошибок не было.</div>
 {% endif %}
@@ -58,11 +61,12 @@
       <option value="{{ value }}" {% if chosen_key == value %}selected{% endif %}>{{ title }}</option>
     {% endfor %}
   </select>
-  <button type="submit">Показать</button>
+  <button type="submit" class="secondary-btn">{{ icon('search') }}Показать</button>
   {% if chosen_provider or chosen_key %}<a href="/errors">сбросить</a>{% endif %}
 </form>
 
 {% if events %}
+<div class="table-wrap">
 <table class="grid">
   <thead>
     <tr><th>Когда</th><th>Ошибка</th><th>Аккаунт</th><th>IP</th><th>Запрос</th><th>HTTP</th><th>Подробности</th><th>Процесс</th></tr>
@@ -83,7 +87,8 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
-<div class="alert info">Ошибок по этому фильтру нет.</div>
+  {{ empty('check', 'Ошибок нет', 'По этому фильтру ничего не нашлось.') }}
 {% endif %}
 {% endblock %}

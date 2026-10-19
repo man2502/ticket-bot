@@ -124,6 +124,8 @@ def list_jobs(
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    from web.services.stations import title_map
+
     jobs = _visible_jobs(db, user).order_by(Job.created_at.desc()).limit(100).all()
 
     return render(
@@ -132,6 +134,7 @@ def list_jobs(
         user,
         jobs=jobs,
         service_titles=SERVICE_TITLES,
+        station_names=title_map(db),
         # Заняты ли очереди сервисов — чтобы кнопка «Запустить» не обманывала.
         busy={s.value: _service_busy_with(db, s.value) for s in Service},
     )
@@ -315,6 +318,7 @@ def job_detail(
         service_title=SERVICE_TITLES[job.service],
         busy_with=_service_busy_with(db, job.service, exclude_job_id=job.id),
         stations=_station_names(db, job),
+        wagon_titles=dict(WAGON_TYPES),
     )
 
 
@@ -362,6 +366,7 @@ def start(
             service_title=SERVICE_TITLES[job.service],
             busy_with=_service_busy_with(db, job.service, exclude_job_id=job.id),
             stations=_station_names(db, job),
+            wagon_titles=dict(WAGON_TYPES),
             error=str(exc),
         )
 

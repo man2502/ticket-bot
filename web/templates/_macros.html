@@ -1,0 +1,38 @@
+{# Общие кусочки разметки. Подключение: {% from "_macros.html" import icon, status_badge %} #}
+
+{% macro icon(name, cls='') -%}
+  <svg class="icon {{ cls }}" aria-hidden="true"><use href="#i-{{ name }}"/></svg>
+{%- endmacro %}
+
+{# Статус процесса словами. В базе — коды (running, needs_review), человеку
+   они ничего не говорят, а цвет без слова не прочитать дальтонику. #}
+{% set JOB_STATUS_TITLES = {
+  'queued': 'ожидает',
+  'running': 'идёт поиск',
+  'booked': 'готово',
+  'needs_review': 'бронь под вопросом',
+  'failed': 'ошибка',
+  'stopped': 'остановлен',
+} %}
+
+{% macro status_badge(status, element_id='') -%}
+  <span class="status status-{{ status }}"{% if element_id %} id="{{ element_id }}"{% endif %}
+        data-status="{{ status }}">{{ JOB_STATUS_TITLES.get(status, status) }}</span>
+{%- endmacro %}
+
+{% macro service_chip(service, title='') -%}
+  <span class="service-chip">
+    {{ icon('plane' if service == 'airlines' else 'train') }}
+    {{ title or ('Самолёт' if service == 'airlines' else 'Поезд') }}
+  </span>
+{%- endmacro %}
+
+{# Пустое состояние: что здесь будет и что сделать, чтобы появилось. #}
+{% macro empty(icon_name, title, text='') -%}
+  <div class="empty">
+    {{ icon(icon_name) }}
+    <strong>{{ title }}</strong>
+    {% if text %}<div>{{ text }}</div>{% endif %}
+    {% if caller %}<div class="row-actions">{{ caller() }}</div>{% endif %}
+  </div>
+{%- endmacro %}

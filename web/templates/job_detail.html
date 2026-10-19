@@ -1,29 +1,44 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon, status_badge, service_chip %}
 {% block title %}Процесс #{{ job.id }}{% endblock %}
 {% block main_class %}container wide{% endblock %}
 
+{# Параметры процесса — словами, а не ключами из базы (wagon_type_id, strict). #}
+{% set PARAM_TITLES = {
+  'wagon_type_id': 'Тип вагона',
+  'train_index': 'Номер поезда в списке',
+  'train_time': 'Время поезда',
+  'multimedia': 'Мультимедиа и Wi-Fi',
+  'strict': 'Строго выбранный рейс',
+  'flight_index': 'Номер рейса в списке',
+  'flight_time': 'Время вылета',
+} %}
+
 {% block content %}
 <div class="page-head">
-  <h1>
-    Процесс #{{ job.id }}
-    <span class="status status-{{ job.status }}" id="job-status">{{ job.status }}</span>
-  </h1>
+  <div class="stack">
+    <a href="/jobs" class="small">{{ icon('back', 'icon-sm') }} Процессы</a>
+    <h1>
+      {{ stations.source }} → {{ stations.destination }}
+      {{ status_badge(job.status, 'job-status') }}
+    </h1>
+    <span class="muted">{{ service_chip(job.service, service_title) }} · процесс #{{ job.id }} · {{ job.depart_date }}</span>
+  </div>
   <div class="row-actions">
     {% if job.status in ('queued', 'stopped', 'failed') %}
       <form method="post" action="/jobs/{{ job.id }}/start" class="inline-form">
-        <button type="submit">Запустить</button>
+        <button type="submit">{{ icon('play') }}Запустить</button>
       </form>
     {% endif %}
     {% if running or job.status == 'running' %}
       <form method="post" action="/jobs/{{ job.id }}/stop" class="inline-form">
-        <button type="submit" class="danger">Остановить</button>
+        <button type="submit" class="danger">{{ icon('stop') }}Остановить</button>
       </form>
     {% endif %}
     <form method="post" action="/jobs/{{ job.id }}/delete" class="inline-form"
           onsubmit="return confirm('Удалить процесс #{{ job.id }} вместе с логами?')">
-      <button type="submit" class="secondary-btn">Удалить</button>
+      <button type="submit" class="secondary-btn" title="Удалить">{{ icon('trash') }}Удалить</button>
     </form>
-    <a class="button-link secondary" href="/jobs">К списку</a>
   </div>
 </div>
 
@@ -58,9 +73,8 @@
 <div class="job-layout">
   <!-- ------------------------------------------------- параметры слева -->
   <section class="job-params">
-    <table class="grid">
+    <table class="grid kv">
       <tbody>
-        <tr><th>Сервис</th><td>{{ service_title }}</td></tr>
         <tr><th>Маршрут</th><td>{{ stations.source }} → {{ stations.destination }}</td></tr>
         <tr><th>Дата</th><td>{{ job.depart_date }}</td></tr>
         {% if job.service == 'airlines' %}
@@ -68,13 +82,13 @@
           <th>Аккаунт</th>
           <td>
             {% if job.provider %}{{ job.provider.title }}{% else %}<span class="muted">назначится при запуске</span>{% endif %}
-            {% if not job.params.get('provider') %}<span class="muted small">(любой свободный)</span>{% endif %}
+            {% if not job.params.get('provider') %}<div class="muted small">любой свободный</div>{% endif %}
           </td>
         </tr>
         {% if job.source_ip %}
         <tr>
           <th>Исходящий адрес</th>
-          <td><code>{{ job.source_ip }}</code> <span class="muted small">на момент запуска</span></td>
+          <td><code>{{ job.source_ip }}</code> <div class="muted small">на момент запуска</div></td>
         </tr>
         {% endif %}
         {% endif %}
@@ -89,13 +103,20 @@
         {% for key, value in job.params.items() %}
           {# Аккаунт показан отдельной строкой выше — голый id тут ни к чему. #}
           {% if value not in ('', None, False) and key != 'provider' %}
-          <tr><th class="small">{{ key }}</th><td class="small">{{ value }}</td></tr>
+          <tr>
+            <th>{{ PARAM_TITLES.get(key, key) }}</th>
+            <td>
+              {% if value is sameas true %}да
+              {% elif key == 'wagon_type_id' %}{{ wagon_titles.get(value, value) if wagon_titles else value }}
+              {% else %}{{ value }}{% endif %}
+            </td>
+          </tr>
           {% endif %}
         {% endfor %}
         {% if job.notify_email or job.notify_phone %}
         <tr>
           <th>Сообщить</th>
-          <td class="small">{{ job.notify_email }} {{ job.notify_phone }}</td>
+          <td class="small">{{ job.notify_email }}{% if job.notify_email and job.notify_phone %}<br>{% endif %}{{ job.notify_phone }}</td>
         </tr>
         {% endif %}
         {% if job.started_at %}
@@ -104,7 +125,7 @@
         {% if job.finished_at %}
         <tr><th>Завершён</th><td class="small">
           {{ job.finished_at.strftime('%d.%m %H:%M:%S') }}
-          {% if job.exit_code is not none %}(код {{ job.exit_code }}){% endif %}
+          {% if job.exit_code is not none %}<span class="muted">(код {{ job.exit_code }})</span>{% endif %}
         </td></tr>
         {% endif %}
       </tbody>
@@ -114,7 +135,7 @@
   <!-- --------------------------------------------------- консоль справа -->
   <section class="console-box">
     <div class="console-head">
-      <span>Консоль</span>
+      <span class="console-title"><span class="console-dots"><i></i><i></i><i></i></span>Консоль</span>
       <label class="console-follow">
         <input type="checkbox" id="errors-only"> только ошибки
       </label>
@@ -126,9 +147,8 @@
        из потока скрываются сами, без отдельной обработки. #}
     <div class="console" id="console">
       {% for log in logs %}
-        <div class="line line-{{ log.level }}">
-          <span class="ts">{{ log.ts.strftime('%H:%M:%S') }}</span>{{ log.text }}
-        </div>
+        {# Одной строкой: консоль сохраняет пробелы, и отступы шаблона стали бы пустыми строками. #}
+        <div class="line line-{{ log.level }}"><span class="ts">{{ log.ts.strftime('%H:%M:%S') }}</span>{{ log.text }}</div>
       {% else %}
         <div class="line line-info"><span class="ts">—</span>Процесс ещё не запускался</div>
       {% endfor %}
@@ -179,10 +199,10 @@
 
   source.addEventListener('done', (event) => {
     const data = JSON.parse(event.data);
-    statusEl.textContent = data.status;
     statusEl.className = 'status status-' + data.status;
+    statusEl.dataset.status = data.status;
     source.close();
-    // Кнопки зависят от статуса — перечитываем страницу целиком.
+    // Кнопки и подпись статуса зависят от него — перечитываем страницу целиком.
     setTimeout(() => window.location.reload(), 800);
   });
 })();

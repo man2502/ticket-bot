@@ -33,10 +33,25 @@ def dashboard(
         "needs_review": jobs.filter(Job.status == JobStatus.NEEDS_REVIEW.value).count(),
     }
 
+    stats["booked"] = jobs.filter(Job.status == JobStatus.BOOKED.value).count()
+
     stations = {
         service.value: db.query(Station).filter(Station.service == service.value).count()
         for service in Service
     }
+
+    # Что требует человека: бронь под вопросом и заблокированная автобронь.
+    # Пока это висит, новый поиск по сервису не запустится — показываем сразу.
+    from web.services.bookings import blockers
+    from web.services.stations import title_map
+
+    blocked = [
+        service.value for service in Service if blockers(db, service.value)
+    ]
+    review_jobs = (
+        jobs.filter(Job.status == JobStatus.NEEDS_REVIEW.value)
+        .order_by(Job.created_at.desc()).limit(5).all()
+    )
 
     return render(
         request,
@@ -44,7 +59,10 @@ def dashboard(
         user,
         stats=stats,
         stations=stations,
-        recent_jobs=jobs.order_by(Job.created_at.desc()).limit(10).all(),
+        blocked_services=blocked,
+        review_jobs=review_jobs,
+        station_names=title_map(db),
+        recent_jobs=jobs.order_by(Job.created_at.desc()).limit(8).all(),
     )
 
 

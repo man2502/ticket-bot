@@ -1,10 +1,18 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}Новый процесс{% endblock %}
 
 {% block content %}
 <div class="page-head">
-  <h1>Новый поиск — {{ service_title|lower }}</h1>
-  <a class="button-link secondary" href="/jobs">К списку</a>
+  <div class="stack">
+    <a href="/jobs" class="small">{{ icon('back', 'icon-sm') }} Процессы</a>
+    <h1>{{ icon('plane' if service == 'airlines' else 'train', 'icon-lg') }} Новый поиск — {{ service_title|lower }}</h1>
+  </div>
+  {# Переключатель сервиса: попасть не в ту форму — частая ошибка. #}
+  <div class="row-actions">
+    <a class="button-link {{ '' if service == 'airlines' else 'secondary' }}" href="/jobs/new?service=airlines">{{ icon('plane') }}Самолёт</a>
+    <a class="button-link {{ '' if service == 'railway' else 'secondary' }}" href="/jobs/new?service=railway">{{ icon('train') }}Поезд</a>
+  </div>
 </div>
 
 {% if errors %}
@@ -33,7 +41,7 @@
 <form method="post" action="/jobs/new" class="card-form">
   <input type="hidden" name="service" value="{{ service }}">
 
-  <h2>Маршрут</h2>
+  <h2 class="cluster">{{ icon('route') }}Маршрут</h2>
   <div class="field-grid">
     <label>
       Откуда <span class="req">*</span>
@@ -66,7 +74,7 @@
     </label>
   </div>
 
-  <h2>Пассажиры</h2>
+  <h3 class="cluster">{{ icon('users') }}Пассажиры</h3>
   {% if passengers %}
   <p class="muted small">
     Порядок отметки влияет на распределение мест. Ребёнок не поедет без взрослого.
@@ -76,7 +84,7 @@
     <label class="checkbox">
       <input type="checkbox" name="passenger_ids" value="{{ p.id }}"
              {% if p.id in (form.passenger_ids or []) %}checked{% endif %}>
-      {{ p.last_name }} {{ p.first_name }}
+      <span>{{ p.last_name }} {{ p.first_name }}</span>
       <span class="field-hint">{{ p.dob }} · {{ p.doc_number }}</span>
     </label>
     {% endfor %}
@@ -88,7 +96,7 @@
   {% endif %}
 
   {% if service == 'railway' %}
-  <h2>Поезд и место</h2>
+  <h3 class="cluster">{{ icon('train') }}Поезд и место</h3>
   <div class="field-grid">
     <label>
       Тип вагона
@@ -120,7 +128,7 @@
     Мультимедиа и Wi-Fi
   </label>
   {% else %}
-  <h2>Рейс</h2>
+  <h3 class="cluster">{{ icon('plane') }}Рейс</h3>
   <div class="field-grid">
     <label>
       Номер рейса в списке
@@ -137,7 +145,7 @@
     </label>
   </div>
 
-  <h2>Аккаунт T5</h2>
+  <h3 class="cluster">{{ icon('key') }}Аккаунт T5</h3>
   <div class="field-grid">
     <label>
       От чьего аккаунта искать
@@ -166,7 +174,7 @@
     </span>
   </label>
 
-  <h2>Куда сообщить</h2>
+  <h3 class="cluster">{{ icon('send') }}Куда сообщить</h3>
   <p class="muted small">
     Пусто — возьмём получателей из <a href="/settings">общих настроек</a>.
   </p>
@@ -189,7 +197,7 @@
   {% endif %}
 
   <div class="form-actions">
-    <button type="submit" {% if not passengers or not stations %}disabled{% endif %}>Создать</button>
+    <button type="submit" {% if not passengers or not stations %}disabled{% endif %}>{{ icon('check') }}Создать</button>
     <a class="button-link secondary" href="/jobs">Отмена</a>
     <span class="muted small">После создания процесс нужно запустить кнопкой</span>
   </div>

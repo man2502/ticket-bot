@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}Настройки{% endblock %}
 
 {# Поле секрета. Сохранённое значение в HTML не попадает никогда — только
@@ -53,15 +54,29 @@
 {% block content %}
 <h1>Настройки</h1>
 
+{# Страница длинная: навигация по разделам остаётся под рукой при прокрутке. #}
+<nav class="subnav" aria-label="Разделы настроек">
+  <a href="#mail">{{ icon('mail', 'icon-sm') }}Почта</a>
+  <a href="#sms">{{ icon('message', 'icon-sm') }}SMS</a>
+  <a href="#recipients">{{ icon('send', 'icon-sm') }}Получатели</a>
+  {% for svc in services %}
+  <a href="#service-{{ svc.service }}">{{ icon('plane' if svc.service == 'airlines' else 'train', 'icon-sm') }}{{ 'Самолёты' if svc.service == 'airlines' else 'Поезда' }}</a>
+  {% if svc.needs_auth %}
+  <a href="#source-ips">{{ icon('globe', 'icon-sm') }}Адреса и 429</a>
+  <a href="#providers">{{ icon('key', 'icon-sm') }}Аккаунты</a>
+  {% endif %}
+  {% endfor %}
+</nav>
+
 {% if message %}
   <div class="alert {{ 'error' if is_error else 'ok' }}">{{ message }}</div>
 {% endif %}
 
 <!-- ------------------------------------------------------------- почта -->
-<section class="card-form">
+<section class="card-form" id="mail">
   <div class="page-head">
-    <h2>Почта</h2>
-    <span class="tag {{ 'tag-ok' if smtp_ready else '' }}">
+    <h2 class="cluster">{{ icon('mail') }}Почта</h2>
+    <span class="tag {{ 'tag-ok' if smtp_ready else 'tag-warn' }}">
       {{ 'настроена' if smtp_ready else 'не настроена' }}
     </span>
   </div>
@@ -87,15 +102,15 @@
       Проверить отправку
       <input name="to" type="email" placeholder="{{ values.default_notify_email or 'адрес получателя' }}">
     </label>
-    <button type="submit" class="secondary-btn">Отправить тест</button>
+    <button type="submit" class="secondary-btn">{{ icon('send') }}Отправить тест</button>
   </form>
 </section>
 
 <!-- --------------------------------------------------------------- SMS -->
-<section class="card-form">
+<section class="card-form" id="sms">
   <div class="page-head">
-    <h2>SMS-шлюз</h2>
-    <span class="tag {{ 'tag-ok' if sms_ready else '' }}">
+    <h2 class="cluster">{{ icon('message') }}SMS-шлюз</h2>
+    <span class="tag {{ 'tag-ok' if sms_ready else 'tag-warn' }}">
       {{ 'настроен' if sms_ready else 'не настроен' }}
     </span>
   </div>
@@ -134,13 +149,13 @@
       Проверить отправку
       <input name="phone" placeholder="{{ values.default_notify_phone or '61234567' }}">
     </label>
-    <button type="submit" class="secondary-btn">Отправить тест</button>
+    <button type="submit" class="secondary-btn">{{ icon('send') }}Отправить тест</button>
   </form>
 </section>
 
 <!-- ------------------------------------------------------- получатели -->
-<section class="card-form">
-  <h2>Получатели по умолчанию</h2>
+<section class="card-form" id="recipients">
+  <h2 class="cluster">{{ icon('send') }}Получатели по умолчанию</h2>
   <p class="muted small">
     Куда слать ссылку на оплату, если в процессе не задан свой получатель.
   </p>
@@ -159,10 +174,10 @@
 
 <!-- ---------------------------------------------------------- сервисы -->
 {% for svc in services %}
-<section class="card-form">
+<section class="card-form" id="service-{{ svc.service }}">
   <div class="page-head">
-    <h2>{{ svc.title }}</h2>
-    <span class="tag {{ 'tag-ok' if svc.is_enabled and not svc.missing else '' }}">
+    <h2 class="cluster">{{ icon('plane' if svc.service == 'airlines' else 'train') }}{{ svc.title }}</h2>
+    <span class="tag {{ 'tag-ok' if svc.is_enabled and not svc.missing else ('tag-error' if svc.missing else '') }}">
       {% if not svc.is_enabled %}выключен
       {% elif svc.missing %}не хватает доступов
       {% else %}готов{% endif %}
@@ -275,7 +290,7 @@
   {% if svc.needs_auth %}
   {# Исходящие адреса. У каждого свой внешний IP и своя лестница 429: сайт режет
      запросы по адресу, и 429 на одном IP не должен останавливать второй. #}
-  <h3 id="source-ips">Исходящие адреса и лимит запросов (HTTP 429)</h3>
+  <h3 id="source-ips" class="cluster">{{ icon('globe') }}Исходящие адреса и лимит запросов (HTTP 429)</h3>
   <p class="muted small">
     Каждый аккаунт ходит со своего адреса, и <strong>с одного адреса одновременно
     идёт один процесс</strong>. Аккаунт без адреса ходит с адреса по умолчанию —
@@ -285,6 +300,7 @@
     процессов с этого адреса на час. Retry-After больше ступени — ждём сколько сказал сервер.
   </p>
 
+  <div class="table-wrap">
   <table class="grid">
     <thead>
       <tr><th>Адрес</th><th>Аккаунты</th><th>Сейчас</th><th>429</th><th></th></tr>
@@ -312,13 +328,13 @@
         <td class="small">
           <form method="post" action="/settings/source-ips/check" class="inline-form">
             <input type="hidden" name="ip" value="{{ item.ip }}">
-            <button type="submit" class="secondary-btn">Проверить IP</button>
+            <button type="submit" class="secondary-btn btn-sm">{{ icon('globe') }}Проверить IP</button>
           </form>
           {% if rl.stopped or rl.pause_left_min %}
           <form method="post" action="/settings/rate-limit/clear" class="inline-form"
                 onsubmit="return confirm('Снять паузу раньше срока? Если сайт всё ещё режет запросы, это верный путь к блокировке аккаунта.')">
             <input type="hidden" name="ip" value="{{ item.ip }}">
-            <button type="submit" class="secondary-btn">Снять {{ 'стоп' if rl.stopped else 'паузу' }}</button>
+            <button type="submit" class="secondary-btn btn-sm">Снять {{ 'стоп' if rl.stopped else 'паузу' }}</button>
           </form>
           {% endif %}
         </td>
@@ -328,11 +344,12 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 
   <form method="post" action="/settings/source-ips" class="provider-card">
     <label>
       Адреса машины — по строке: <code>IP подпись</code>
-      <textarea name="source_ips" rows="3" placeholder="172.16.16.214 95.95.95.95&#10;172.16.17.214 119.119.119.119">{{ source_ips_text }}</textarea>
+      <textarea name="source_ips" rows="3" placeholder="10.0.0.11 внешний 203.0.113.10&#10;10.0.0.12 внешний 203.0.113.20">{{ source_ips_text }}</textarea>
       <span class="field-hint">Внутренний адрес, как в <code>ip addr</code>. Подпись — для себя, например внешний IP.
         «Проверить IP» покажет, под каким внешним адресом видят запросы.</span>
     </label>
@@ -345,7 +362,7 @@
   {% if svc.needs_auth %}
   {# Аккаунты — отдельными формами: вложенные формы HTML не допускает, а общая
      форма заставила бы сохранять все аккаунты разом ради правки одного. #}
-  <h3 id="providers">2. Аккаунты T5</h3>
+  <h3 id="providers" class="cluster">{{ icon('key') }}2. Аккаунты T5</h3>
   <p class="muted small">
     Телефон и пароль, которыми входят в приложение. <strong>На этот аккаунт
     запишется бронь и придёт счёт.</strong> Каждый процесс самолётов идёт от
@@ -360,7 +377,7 @@
   {% for p in svc.providers %}
   <form method="post" action="/settings/providers/{{ p.id }}" class="provider-card">
     <div class="page-head">
-      <strong>{{ p.title }}</strong>
+      <strong class="cluster"><span class="avatar">{{ p.title[:1] }}</span>{{ p.title }}</strong>
       <span class="tag {{ p.tone }}">
         {% if p.busy_job %}<a href="/jobs/{{ p.busy_job }}">{{ p.state }}</a>{% else %}{{ p.state }}{% endif %}
       </span>
@@ -394,7 +411,7 @@
   {% endfor %}
 
   <form method="post" action="/settings/providers" class="provider-card provider-new">
-    <strong>Добавить аккаунт</strong>
+    <strong class="cluster">{{ icon('plus') }}Добавить аккаунт</strong>
     <div class="field-grid">
       {{ text_field('name', 'Название', '', 'Для себя: «Мой», «Рабочий»') }}
       {{ text_field('login', 'Телефон', '', 'Например: +99361234567') }}
