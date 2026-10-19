@@ -74,3 +74,25 @@ def test_bot_refuses_to_start_from_a_missing_address(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setenv("API_SOURCE_IP", "")
     assert api_check.check_source_ip() == ""
+
+
+@pytest.mark.parametrize(
+    "body,ip",
+    [
+        ("95.95.95.95\n", "95.95.95.95"),
+        ("Ваш IP: 119.119.119.119 (Ашхабад)", "119.119.119.119"),
+        ("2001:db8::1", "2001:db8::1"),
+    ],
+)
+def test_public_ip_is_found_in_the_answer(body: str, ip: str) -> None:
+    assert netaddr.parse_public_ip(body) == ip
+
+
+def test_answer_without_ip_is_an_error() -> None:
+    with pytest.raises(OSError):
+        netaddr.parse_public_ip("<html>captcha</html>")
+
+
+def test_check_goes_to_2ip_io() -> None:
+    """Та же проверка, что `curl --interface <IP> https://2ip.io` в терминале."""
+    assert netaddr.PUBLIC_IP_HOST == "2ip.io"

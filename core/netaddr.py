@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import http.client
 import ipaddress
+import re
 import socket
 import ssl
 
@@ -24,8 +25,14 @@ __all__ = [
     "SourceIpError",
 ]
 
-# Сервис, который отвечает внешним IP одной строкой.
-PUBLIC_IP_HOST = "api.ipify.org"
+# Сервис, который отвечает внешним IP. Тот же, что в ручной проверке
+# `curl --interface <IP> https://2ip.io`: кнопка в панели и команда в
+# терминале должны показывать одно и то же.
+PUBLIC_IP_HOST = "2ip.io"
+
+# Первый IPv4 в ответе. Сервис на запрос «как от curl» отвечает одной строкой,
+# но если он добавит к адресу текст, адрес всё равно найдётся.
+_IPV4_IN_TEXT = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 
 class SourceIpError(ValueError):
@@ -82,14 +89,30 @@ def public_ip(source_ip: str = "", *, timeout: float = 8.0) -> str:
         context=ssl.create_default_context(),
     )
     try:
-        conn.request("GET", "/", headers={"User-Agent": "curl/8"})
+        # User-Agent как у curl: на браузерный 2ip.io отдаёт целую HTML-страницу.
+        conn.request("GET", "/", headers={"User-Agent": "curl/8", "Accept": "text/plain"})
         response = conn.getresponse()
-        body = response.read(64).decode("ascii", "replace").strip()
+        body = response.read(4096).decode("utf-8", "replace").strip()
     finally:
         conn.close()
     if response.status != 200:
         raise OSError(f"{PUBLIC_IP_HOST} ответил HTTP {response.status}")
-    return normalize_ip(body)
+    return parse_public_ip(body)
+
+
+def parse_public_ip(body: str) -> str:
+    """IP из ответа сервиса. Бросает OSError, если адреса в ответе нет."""
+    text = (body or "").strip()
+    try:
+        return normalize_ip(text)
+    except SourceIpError:
+        pass
+    for candidate in _IPV4_IN_TEXT.findall(text):
+        try:
+            return normalize_ip(candidate)
+        except SourceIpError:
+            continue
+    raise OSError(f"{PUBLIC_IP_HOST} не прислал IP-адрес: {text[:80]!r}")
 
 
 def ip_slug(ip: str) -> str:
