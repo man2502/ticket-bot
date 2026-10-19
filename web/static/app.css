@@ -1228,3 +1228,39 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
   .kv th { width: 120px; }
   .quick-actions { grid-template-columns: 1fr; }
 }
+
+/* ============================================================ страницы */
+
+.pager {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.pager-info { margin-right: auto; }
+
+.pager-link {
+  display: inline-grid;
+  place-items: center;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+a.pager-link:hover { border-color: var(--border-strong); color: var(--text); text-decoration: none; }
+
+.pager-link.current {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.pager-gap { color: var(--muted); padding: 0 2px; }

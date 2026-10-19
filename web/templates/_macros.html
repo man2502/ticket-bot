@@ -27,6 +27,39 @@
   </span>
 {%- endmacro %}
 
+{# Номера страниц. url — адрес без номера, номер дописывается в конец
+   (фильтры в нём уже есть). Показываем первую, последнюю и соседние с текущей:
+   на тридцати страницах ряд из тридцати кнопок не помещается. #}
+{% macro pager(page, pages, url, total=None, page_size=None, anchor='') -%}
+  {% if pages > 1 %}
+  <nav class="pager" aria-label="Страницы">
+    {% if total is not none and page_size %}
+      <span class="pager-info muted small">
+        {{ (page - 1) * page_size + 1 }}–{{ [page * page_size, total]|min }} из {{ total }}
+      </span>
+    {% endif %}
+    {% if page > 1 %}
+      <a class="pager-link" href="{{ url }}{{ page - 1 }}{{ anchor }}" rel="prev" aria-label="Назад">{{ icon('back', 'icon-sm') }}</a>
+    {% endif %}
+    {% set shown = namespace(last=0) %}
+    {% for n in range(1, pages + 1) %}
+      {% if n == 1 or n == pages or (n - page)|abs <= 2 %}
+        {% if shown.last and n - shown.last > 1 %}<span class="pager-gap">…</span>{% endif %}
+        {% if n == page %}
+          <span class="pager-link current" aria-current="page">{{ n }}</span>
+        {% else %}
+          <a class="pager-link" href="{{ url }}{{ n }}{{ anchor }}">{{ n }}</a>
+        {% endif %}
+        {% set shown.last = n %}
+      {% endif %}
+    {% endfor %}
+    {% if page < pages %}
+      <a class="pager-link" href="{{ url }}{{ page + 1 }}{{ anchor }}" rel="next" aria-label="Дальше">{{ icon('chevron', 'icon-sm') }}</a>
+    {% endif %}
+  </nav>
+  {% endif %}
+{%- endmacro %}
+
 {# Пустое состояние: что здесь будет и что сделать, чтобы появилось. #}
 {% macro empty(icon_name, title, text='') -%}
   <div class="empty">

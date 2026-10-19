@@ -13,7 +13,7 @@ from sqlalchemy import case, func
 
 from web.models import ErrorEvent, Provider
 
-__all__ = ["ERROR_TITLES", "summary", "feed", "prune", "KEEP_DAYS"]
+__all__ = ["ERROR_TITLES", "summary", "feed", "count", "prune", "KEEP_DAYS", "PAGE_SIZE"]
 
 # Подписи — те же, что у бота (airlines_api/api_errors.py). Продублированы, а не
 # импортированы: панель не должна зависеть от модуля бота ради словаря.
@@ -34,6 +34,10 @@ ERROR_TITLES = {
 
 # Сколько дней хранить. Сводка смотрит на неделю, месяц — с запасом на разбор.
 KEEP_DAYS = 30
+
+# Записей на странице ленты. За месяц их тысячи: раньше показывались только
+# последние 200, а всё, что старше, со страницы было не достать.
+PAGE_SIZE = 50
 
 
 def _now() -> dt.datetime:
@@ -96,15 +100,36 @@ def summary(db) -> dict[str, Any]:
     return {"columns": columns, "rows": table}
 
 
-def feed(
-    db, *, provider_id: int | None = None, key: str = "", limit: int = 200
-) -> list[ErrorEvent]:
+def _filtered(db, provider_id: int | None, key: str):
     query = db.query(ErrorEvent)
     if provider_id is not None:
         query = query.filter(ErrorEvent.provider_id == provider_id)
     if key:
         query = query.filter(ErrorEvent.key == key)
-    return query.order_by(ErrorEvent.id.desc()).limit(limit).all()
+    return query
+
+
+def feed(
+    db,
+    *,
+    provider_id: int | None = None,
+    key: str = "",
+    limit: int = PAGE_SIZE,
+    offset: int = 0,
+) -> list[ErrorEvent]:
+    """Ошибки по фильтру, новые первыми; `offset` — для постраничного вывода."""
+    return (
+        _filtered(db, provider_id, key)
+        .order_by(ErrorEvent.id.desc())
+        .offset(max(0, offset))
+        .limit(limit)
+        .all()
+    )
+
+
+def count(db, *, provider_id: int | None = None, key: str = "") -> int:
+    """Сколько всего ошибок по тому же фильтру — для номеров страниц."""
+    return _filtered(db, provider_id, key).count()
 
 
 def prune(db, *, keep_days: int = KEEP_DAYS) -> int:

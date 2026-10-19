@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, empty %}
+{% from "_macros.html" import icon, empty, pager %}
 {% block title %}Ошибки{% endblock %}
 
 {% block content %}
@@ -47,8 +47,8 @@
 <div class="alert ok">За неделю ошибок не было.</div>
 {% endif %}
 
-<h2>Последние</h2>
-<form method="get" action="/errors" class="inline-form error-filter">
+<h2 id="feed">Последние{% if total %} <span class="muted small">— {{ total }}</span>{% endif %}</h2>
+<form method="get" action="/errors#feed" class="inline-form error-filter">
   <select name="provider">
     <option value="">Все аккаунты</option>
     {% for p in providers %}
@@ -62,7 +62,7 @@
     {% endfor %}
   </select>
   <button type="submit" class="secondary-btn">{{ icon('search') }}Показать</button>
-  {% if chosen_provider or chosen_key %}<a href="/errors">сбросить</a>{% endif %}
+  {% if chosen_provider or chosen_key %}<a href="/errors#feed">сбросить</a>{% endif %}
 </form>
 
 {% if events %}
@@ -88,6 +88,7 @@
   </tbody>
 </table>
 </div>
+{{ pager(page, pages, page_url, total=total, page_size=page_size, anchor='#feed') }}
 {% else %}
   {{ empty('check', 'Ошибок нет', 'По этому фильтру ничего не нашлось.') }}
 {% endif %}

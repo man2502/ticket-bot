@@ -297,3 +297,86 @@ def test_errors_page_is_in_the_menu_for_admins_only() -> None:
 
     item = next(i for i in NAV_ITEMS if i["url"] == "/errors")
     assert item["admin_only"] is True
+
+
+# --------------------------------------------------------------------------- #
+# Постраничный вывод
+# --------------------------------------------------------------------------- #
+
+
+def _errors_html(db, **query) -> str:
+    from starlette.requests import Request
+
+    from web.models import Role, User
+    from web.routes.errors import errors_page
+    from web.security import hash_password
+
+    admin = db.query(User).filter(User.login == "root").one_or_none()
+    if admin is None:
+        admin = User(login="root", password_hash=hash_password("x" * 8), role=Role.ADMIN.value)
+        db.add(admin)
+        db.commit()
+    request = Request({"type": "http", "method": "GET", "path": "/errors",
+                       "headers": [], "query_string": b""})
+    params = {"provider": "", "key": "", "page": ""}
+    params.update(query)
+    return errors_page(request, user=admin, db=db, **params).body.decode("utf-8")
+
+
+def _fill(db, n: int, key: str = "network", provider=None) -> None:
+    from web.models import ErrorEvent
+
+    for i in range(n):
+        db.add(ErrorEvent(key=key, provider_id=provider.id if provider else None,
+                          detail=f"ошибка-{i:03d}"))
+    db.commit()
+
+
+def test_feed_pages_reach_every_record(db) -> None:
+    """Раньше показывались только последние 200 — старые было не достать."""
+    from web.services.errors import PAGE_SIZE, count, feed
+
+    _fill(db, PAGE_SIZE * 2 + 7)
+    assert count(db) == PAGE_SIZE * 2 + 7
+    seen = []
+    for page in range(3):
+        seen += [e.detail for e in feed(db, limit=PAGE_SIZE, offset=page * PAGE_SIZE)]
+    assert len(seen) == len(set(seen)) == PAGE_SIZE * 2 + 7
+    assert seen[0] == f"ошибка-{PAGE_SIZE * 2 + 6:03d}", "новые первыми"
+
+
+def test_page_shows_its_slice_and_links(db) -> None:
+    from web.services.errors import PAGE_SIZE
+
+    _fill(db, PAGE_SIZE * 3)
+    html = _errors_html(db, page="2")
+
+    assert f"ошибка-{PAGE_SIZE * 2 - 1:03d}" in html  # первая запись второй страницы
+    assert f"ошибка-{PAGE_SIZE * 3 - 1:03d}" not in html  # с первой страницы
+    assert f"{PAGE_SIZE + 1}–{PAGE_SIZE * 2} из {PAGE_SIZE * 3}" in html
+    assert 'href="/errors?page=3#feed"' in html
+
+
+def test_filter_is_kept_in_page_links(db) -> None:
+    from web.services.errors import PAGE_SIZE
+
+    first = _provider(db, "Первый")
+    _fill(db, PAGE_SIZE + 5, key="rate_limit", provider=first)
+    _fill(db, 10, key="network")
+
+    html = _errors_html(db, provider=str(first.id), key="rate_limit")
+    assert f'href="/errors?provider={first.id}&amp;key=rate_limit&amp;page=2#feed"' in html
+
+
+def test_bad_page_number_falls_back(db) -> None:
+    """Мусор или слишком большой номер — не ошибка, а первая или последняя страница."""
+    from web.services.errors import PAGE_SIZE
+
+    _fill(db, PAGE_SIZE + 1)
+    assert "ошибка-050" in _errors_html(db, page="мусор")
+    assert "ошибка-000" in _errors_html(db, page="999")
+
+
+def test_single_page_has_no_pager(db) -> None:
+    _fill(db, 3)
+    assert 'class="pager"' not in _errors_html(db)
