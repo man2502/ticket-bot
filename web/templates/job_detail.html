@@ -136,21 +136,25 @@
   <section class="console-box">
     <div class="console-head">
       <span class="console-title"><span class="console-dots"><i></i><i></i><i></i></span>Консоль</span>
+      {% if job.status in ('running', 'queued') %}
+      <span class="console-live" id="console-live" data-state="connecting">подключение…</span>
+      {% endif %}
       <label class="console-follow">
         <input type="checkbox" id="errors-only"> только ошибки
       </label>
       <label class="console-follow">
         <input type="checkbox" id="follow" checked> прокручивать
       </label>
+      <button type="button" class="console-btn" id="console-clear" title="Убрать строки с экрана. В базе они остаются.">очистить</button>
     </div>
     {# Фильтр — классом на контейнере, а не перебором строк: новые строки
        из потока скрываются сами, без отдельной обработки. #}
     <div class="console" id="console">
       {% for log in logs %}
         {# Одной строкой: консоль сохраняет пробелы, и отступы шаблона стали бы пустыми строками. #}
-        <div class="line line-{{ log.level }}"><span class="ts">{{ log.ts.strftime('%H:%M:%S') }}</span>{{ log.text }}</div>
+        <div class="line line-{{ log.level }}" data-id="{{ log.id }}"><span class="ts">{{ log.ts.strftime('%H:%M:%S') }}</span>{{ log.text }}</div>
       {% else %}
-        <div class="line line-info"><span class="ts">—</span>Процесс ещё не запускался</div>
+        <div class="line line-info" data-placeholder><span class="ts">—</span>Процесс ещё не запускался</div>
       {% endfor %}
     </div>
   </section>
@@ -161,26 +165,51 @@
   const box = document.getElementById('console');
   const follow = document.getElementById('follow');
   const errorsOnly = document.getElementById('errors-only');
+  const live = document.getElementById('console-live');
+  const statusEl = document.getElementById('job-status');
+
+  // Сколько строк держать на экране. Поиск идёт сутками, и без предела страница
+  // с десятками тысяч строк начинает тормозить, а потом и вовсе встаёт.
+  const MAX_LINES = 2000;
+
   errorsOnly.addEventListener('change', () => {
     box.classList.toggle('errors-only', errorsOnly.checked);
   });
-  const statusEl = document.getElementById('job-status');
 
-  // Последняя показанная строка: при переподключении не покажем повторно то,
-  // что уже на экране.
-  const lines = box.querySelectorAll('.line[data-id]');
-  let lastId = lines.length ? Number(lines[lines.length - 1].dataset.id) : {{ logs[-1].id if logs else 0 }};
+  // Очистка — только экрана: новые строки продолжают приходить, в базе всё остаётся.
+  document.getElementById('console-clear').addEventListener('click', () => {
+    box.replaceChildren();
+  });
 
+  // Последняя показанная строка. По ней же переподключаемся: иначе после обрыва
+  // браузер запросил бы всё с момента открытия страницы и показал бы повторы.
+  let lastId = {{ logs[-1].id if logs else 0 }};
+
+  const atBottom = () => box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   const scroll = () => { if (follow.checked) box.scrollTop = box.scrollHeight; };
   scroll();
+
+  // Прокрутили вверх читать — не утаскиваем вниз; вернулись в конец — снова следим.
+  box.addEventListener('scroll', () => { follow.checked = atBottom(); });
+  follow.addEventListener('change', scroll);
+
+  const setLive = (state, text) => {
+    if (!live) return;
+    live.dataset.state = state;
+    live.textContent = text;
+  };
 
   const status = "{{ job.status }}";
   if (status !== 'running' && status !== 'queued') return;
 
-  const source = new EventSource(`/jobs/{{ job.id }}/stream?after=${lastId}`);
+  let source = null;
+  let retry = 1000;
 
-  source.addEventListener('logs', (event) => {
-    for (const row of JSON.parse(event.data)) {
+  const append = (rows) => {
+    box.querySelectorAll('[data-placeholder]').forEach((el) => el.remove());
+    const fragment = document.createDocumentFragment();
+    for (const row of rows) {
+      if (row.id <= lastId) continue;  // повтор после переподключения
       const div = document.createElement('div');
       div.className = 'line line-' + row.level;
       div.dataset.id = row.id;
@@ -191,20 +220,38 @@
       // textContent, а не innerHTML: в лог попадает ответ чужого сервера,
       // и вставлять его как разметку нельзя.
       div.appendChild(document.createTextNode(row.text));
-      box.appendChild(div);
+      fragment.appendChild(div);
       lastId = row.id;
     }
+    box.appendChild(fragment);
+    let extra = box.childElementCount - MAX_LINES;
+    while (extra-- > 0) box.firstElementChild.remove();
     scroll();
-  });
+  };
 
-  source.addEventListener('done', (event) => {
-    const data = JSON.parse(event.data);
-    statusEl.className = 'status status-' + data.status;
-    statusEl.dataset.status = data.status;
-    source.close();
-    // Кнопки и подпись статуса зависят от него — перечитываем страницу целиком.
-    setTimeout(() => window.location.reload(), 800);
-  });
+  const connect = () => {
+    source = new EventSource(`/jobs/{{ job.id }}/stream?after=${lastId}`);
+    source.onopen = () => { retry = 1000; setLive('live', 'в эфире'); };
+    source.addEventListener('logs', (event) => append(JSON.parse(event.data)));
+    source.addEventListener('done', (event) => {
+      const data = JSON.parse(event.data);
+      statusEl.className = 'status status-' + data.status;
+      statusEl.dataset.status = data.status;
+      source.close();
+      setLive('off', 'завершён');
+      // Кнопки и подпись статуса зависят от него — перечитываем страницу целиком.
+      setTimeout(() => window.location.reload(), 800);
+    });
+    // Сами переподключаемся — с последней показанной строки, а не с той,
+    // что была при открытии страницы (так делал бы EventSource сам).
+    source.onerror = () => {
+      source.close();
+      setLive('lost', 'нет связи — переподключаюсь');
+      setTimeout(connect, retry);
+      retry = Math.min(retry * 2, 15000);
+    };
+  };
+  connect();
 })();
 </script>
 {% endblock %}

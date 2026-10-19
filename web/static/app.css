@@ -959,6 +959,41 @@ input[type="checkbox"], input[type="radio"] {
 
 .console-follow input { width: 15px; height: 15px; }
 
+/* Состояние потока: видно, что консоль живая, а не застыла. */
+.console-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #8b93a5;
+}
+
+.console-live::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.console-live[data-state="live"] { color: #4ade80; }
+.console-live[data-state="live"]::before { animation: pulse 1.4s ease-in-out infinite; }
+.console-live[data-state="lost"] { color: #fbbf24; }
+
+.console-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid #2a3040;
+  border-radius: 6px;
+  background: transparent;
+  color: #a7afbf;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.console-btn:hover { background: #1a2030; color: #e8eaf0; }
+
 .console {
   height: 640px;
   max-height: 72vh;

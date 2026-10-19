@@ -55,9 +55,14 @@ __all__ = [
 _processes: dict[int, subprocess.Popen] = {}
 _lock = threading.Lock()
 
-# Сколько строк лога хранить на процесс. Поиск может идти сутками по два
-# запроса в минуту — без предела база растёт бесконечно.
-MAX_LOGS_PER_JOB = 20_000
+# Сколько последних строк лога хранить на процесс. Поиск идёт сутками, и без
+# предела база растёт бесконечно. Раньше это был потолок: после 20 000 строк
+# вывод переставал записываться совсем, и консоль процесса молчала, хотя бот
+# работал. Теперь это окно — старые строки уходят, новые пишутся всегда.
+# Ошибки при этом не теряются: они отдельно лежат в журнале ошибок.
+KEEP_LOGS_PER_JOB = 5_000
+# Как часто подрезать: удалять по строке на каждую новую — лишняя нагрузка.
+PRUNE_LOGS_EVERY = 500
 
 
 class JobStartError(RuntimeError):
@@ -412,14 +417,12 @@ def _pump_output(job_id: int, process: subprocess.Popen) -> None:
     """
     written = 0
     try:
+        # Строки прошлых запусков того же процесса — тоже в окне.
+        with session_scope() as db:
+            prune_job_logs(db, job_id)
         for raw in process.stdout:  # type: ignore[union-attr]
             line = raw.rstrip("\r\n")
             if not line.strip():
-                continue
-
-            if written >= MAX_LOGS_PER_JOB:
-                # Не обрываем чтение: процесс должен доработать. Просто
-                # перестаём писать, иначе база растёт бесконечно.
                 continue
 
             try:
@@ -427,16 +430,9 @@ def _pump_output(job_id: int, process: subprocess.Popen) -> None:
                     db.add(JobLog(job_id=job_id, text=line[:4000], level=classify(line)))
                     _record_error_event(db, job_id, line)
                 written += 1
-                if written == MAX_LOGS_PER_JOB:
+                if written % PRUNE_LOGS_EVERY == 0:
                     with session_scope() as db:
-                        db.add(
-                            JobLog(
-                                job_id=job_id,
-                                level=LogLevel.WARN.value,
-                                text=f"Достигнут предел в {MAX_LOGS_PER_JOB} строк — "
-                                     f"дальнейший вывод не сохраняется",
-                            )
-                        )
+                        prune_job_logs(db, job_id)
             except Exception as exc:  # noqa: BLE001 — база не должна ронять чтение
                 print(f"[runner] job {job_id}: не записал строку лога: {exc}")
     except Exception as exc:  # noqa: BLE001
@@ -444,6 +440,26 @@ def _pump_output(job_id: int, process: subprocess.Popen) -> None:
     finally:
         code = process.wait()
         _finish(job_id, code)
+
+
+def prune_job_logs(db, job_id: int, *, keep: int | None = None) -> int:
+    """Оставить у процесса последние `keep` строк лога. Возвращает, сколько удалено."""
+    keep = KEEP_LOGS_PER_JOB if keep is None else keep
+    border = (
+        db.query(JobLog.id)
+        .filter(JobLog.job_id == job_id)
+        .order_by(JobLog.id.desc())
+        .offset(keep)
+        .limit(1)
+        .scalar()
+    )
+    if border is None:
+        return 0
+    return (
+        db.query(JobLog)
+        .filter(JobLog.job_id == job_id, JobLog.id <= border)
+        .delete(synchronize_session=False)
+    )
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")

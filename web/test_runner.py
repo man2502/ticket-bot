@@ -869,3 +869,59 @@ def test_flight_choice_reaches_the_bot(db) -> None:
 
     values = _env_values(prepare_launch(db, job).env_file)
     assert values["FLIGHT_INDEX"] == "2,1"
+
+
+# --------------------------------------------------------------------------- #
+# Лог процесса: окно последних строк, а не потолок
+# --------------------------------------------------------------------------- #
+
+
+class _FakeProcess:
+    """Процесс бота, который печатает заданные строки и выходит с кодом 0."""
+
+    def __init__(self, lines: list[str]) -> None:
+        self.stdout = iter(line + "\n" for line in lines)
+
+    def wait(self) -> int:
+        return 0
+
+
+def test_log_keeps_writing_past_the_window(db, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Раньше после 20 000 строк вывод переставал записываться совсем, и консоль
+    процесса молчала, хотя бот работал сутками. Теперь старые строки уходят,
+    а новые пишутся всегда.
+    """
+    import web.services.runner as runner
+    from web.models import JobLog
+
+    monkeypatch.setattr(runner, "KEEP_LOGS_PER_JOB", 25)
+    monkeypatch.setattr(runner, "PRUNE_LOGS_EVERY", 10)
+    job = _make_job(db)
+
+    runner._pump_output(job.id, _FakeProcess([f"строка {n}" for n in range(1, 101)]))
+
+    db.expire_all()
+    texts = [row.text for row in db.query(JobLog).filter(JobLog.job_id == job.id)
+             .order_by(JobLog.id)]
+    assert "строка 100" in texts, "последняя строка должна дойти до консоли"
+    assert "строка 1" not in texts, "старые строки должны уходить"
+    assert not any("предел" in text for text in texts)
+
+
+def test_prune_keeps_the_latest_lines(db) -> None:
+    from web.models import JobLog
+    from web.services.runner import prune_job_logs
+
+    job, other = _make_job(db), _make_job(db)
+    for n in range(10):
+        db.add(JobLog(job_id=job.id, text=f"{n}"))
+        db.add(JobLog(job_id=other.id, text=f"{n}"))
+    db.commit()
+
+    assert prune_job_logs(db, job.id, keep=3) == 7
+    db.commit()
+    assert [r.text for r in db.query(JobLog).filter(JobLog.job_id == job.id)
+            .order_by(JobLog.id)] == ["7", "8", "9"]
+    assert db.query(JobLog).filter(JobLog.job_id == other.id).count() == 10, "чужой лог не трогаем"
+    assert prune_job_logs(db, job.id, keep=3) == 0
