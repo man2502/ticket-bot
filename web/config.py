@@ -45,6 +45,11 @@ RUNS_DIR = DATA_DIR / "runs"
 RAILWAY_DIR = REPO_ROOT / "railway-api"
 AIRLINES_API_DIR = REPO_ROOT / "airlines_api"
 
+# Данные поездного бота (журнал броней, состояние). Та же переменная, что
+# читает сам бот (railway-api/railway_env.py), — иначе панель смотрела бы
+# в один журнал, а бот писал бы в другой.
+RAILWAY_DATA_DIR = Path(os.getenv("RAILWAY_DATA_DIR") or RAILWAY_DIR)
+
 
 def db_path() -> Path:
     return Path(os.getenv("TICKET_DB_PATH") or (DATA_DIR / "ticket.db"))

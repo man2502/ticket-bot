@@ -1,0 +1,31 @@
+# Панель бронирования. Запуск: docker compose up -d --build
+# Подробности, перенос данных и вход через SSH-туннель — в DEPLOY.md.
+services:
+  panel:
+    build:
+      context: .
+      args:
+        # Зеркало PyPI, если обычный закрыт: PIP_INDEX_URL=... docker compose build
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: ticket-panel
+    container_name: ticket-panel
+    restart: unless-stopped
+    # tini первым процессом: передаёт SIGTERM панели и убирает зомби от ботов.
+    init: true
+    # Панель при остановке шлёт ботам SIGINT и ждёт каждого до 5 с. Запас —
+    # чтобы docker не добил её раньше и бот не оборвался посреди брони.
+    stop_grace_period: 60s
+    environment:
+      # Время Туркменистана: от него зависят слоты проверок и время в логах.
+      TZ: Asia/Ashgabat
+    volumes:
+      - ./data:/data
+    # Только для самой машины: снаружи панель доступна через SSH-туннель.
+    # В ней паспорта и пароли — открывать порт в интернет нельзя.
+    ports:
+      - "127.0.0.1:8000:8000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

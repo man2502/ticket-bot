@@ -55,9 +55,22 @@ __all__ = [
 ]
 
 TRAINER = AIRLINES_API_DIR / "train_captcha_cnn_api.py"
-LIVE_MODEL = AIRLINES_API_DIR / "captcha_model_api.pt"
-CANDIDATE_MODEL = AIRLINES_API_DIR / "captcha_model_api.candidate.pt"
-PREVIOUS_MODEL = AIRLINES_API_DIR / "captcha_model_api.prev.pt"
+
+
+def _live_model_path() -> Path:
+    """Рабочая модель — тот же файл, что читает бот (CAPTCHA_API_CNN_MODEL)."""
+    raw = (os.getenv("CAPTCHA_API_CNN_MODEL") or "").strip()
+    if not raw:
+        return AIRLINES_API_DIR / "captcha_model_api.pt"
+    path = Path(raw)
+    return path if path.is_absolute() else AIRLINES_API_DIR / path
+
+
+# Кандидат и прошлая версия — рядом с рабочей: замена идёт копированием в
+# пределах одного каталога, а в контейнере это каталог в томе с данными.
+LIVE_MODEL = _live_model_path()
+CANDIDATE_MODEL = LIVE_MODEL.with_name("captcha_model_api.candidate.pt")
+PREVIOUS_MODEL = LIVE_MODEL.with_name("captcha_model_api.prev.pt")
 
 # Обучение печатает десяток строк на сотню эпох — предел нужен только на случай
 # бесконечного потока ошибок из torch.

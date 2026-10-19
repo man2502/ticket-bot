@@ -1,0 +1,39 @@
+# В образ — только код. Данные живут в томе /data, а секреты не должны
+# попасть в слои образа: их оттуда не вычистить.
+.git
+.venv
+**/.venv
+**/__pycache__
+**/*.pyc
+data
+web/data
+
+# Секреты и персональные данные
+**/.env
+**/.env.local
+**/check.env
+passengers.json
+passenger.json
+profiles
+
+# Рабочие файлы ботов — в образе они устарели бы с первой же минуты
+**/*_bookings.json
+**/*_state.json
+**/api_rate_limit.json
+**/.search_rate_*.json
+**/.last_bank_url.txt
+**/api_captcha_last.png
+airlines_api/captcha_dataset_api
+captcha_dataset
+captcha_dataset_api
+airlines_api/captcha_model_api.candidate.*
+airlines_api/captcha_model_api.prev.*
+**/*.pt.tmp
+
+# Отладка и старое
+.debug
+**/.debug_*.html
+playwright-report
+mitmweb-flows
+other
+*.tar.gz

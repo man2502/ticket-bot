@@ -22,7 +22,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from web.config import AIRLINES_API_DIR, RAILWAY_DIR, RUNS_DIR
+from web.config import AIRLINES_API_DIR, RAILWAY_DATA_DIR, RAILWAY_DIR, RUNS_DIR
 from web.models import Job, Service
 from web.services.settings import get_service_config, get_service_secret
 
@@ -33,6 +33,7 @@ __all__ = [
     "local_env_warning",
     "booking_contacts",
     "SERVICE_DIRS",
+    "SERVICE_DATA_DIRS",
     "SERVICE_SCRIPTS",
 ]
 
@@ -44,6 +45,13 @@ SERVICE_DIRS = {
 SERVICE_SCRIPTS = {
     Service.RAILWAY.value: "railway_check.py",
     Service.AIRLINES.value: "api_check.py",
+}
+
+# Где боты держат свои журналы. Для поезда это не обязательно каталог кода:
+# в контейнере журнал лежит в томе с данными (RAILWAY_DATA_DIR).
+SERVICE_DATA_DIRS = {
+    Service.RAILWAY.value: RAILWAY_DATA_DIR,
+    Service.AIRLINES.value: AIRLINES_API_DIR,
 }
 
 # Журналы броней ботов: панель читает их после выхода процесса, чтобы узнать
@@ -71,7 +79,7 @@ class BotLaunch:
 
     @property
     def journal(self) -> Path:
-        return self.cwd / SERVICE_JOURNALS[self.service]
+        return SERVICE_DATA_DIRS[self.service] / SERVICE_JOURNALS[self.service]
 
 
 def local_env_warning(service: str) -> str:

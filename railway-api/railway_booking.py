@@ -22,7 +22,7 @@ from core.booking_guard import AlreadySettled, BookingGuard, booking_key
 from notify_helper import notify
 from passenger_loader import get_passengers
 from railway_client import RequestFailed, ResultUnknown, api_call
-from railway_env import RAILWAY_ROOT, env
+from railway_env import RAILWAY_DATA_DIR, env
 from railway_seats import SelectedSeat
 from railway_term import green, red
 from railway_trips import (
@@ -32,7 +32,7 @@ from railway_trips import (
     wagon_type_label,
 )
 
-BOOKINGS_JOURNAL = RAILWAY_ROOT / "railway_bookings.json"
+BOOKINGS_JOURNAL = RAILWAY_DATA_DIR / "railway_bookings.json"
 
 
 class BookingError(RuntimeError):

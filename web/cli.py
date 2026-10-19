@@ -5,6 +5,8 @@
     python -m web.cli create-admin --login a --password ...
     python -m web.cli reset-password --login a
     python -m web.cli list-users
+    python -m web.cli export-data --out ticket-data.tar.gz   данные для переезда (см. DEPLOY.md)
+    python -m web.cli relocate-paths --old-root D:/projects/ticket
 
 Пароль по умолчанию не заводится намеренно: панель управляет реальными деньгами
 (бронь ведёт на страницу оплаты), и учётная запись admin/admin, которую забыли
@@ -111,6 +113,40 @@ def cmd_list_users(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export_data(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from web.migrate import export_data
+
+    out = Path(args.out).resolve()
+    print(f"Собираю {out} — набор капч большой, это займёт пару минут…")
+    summary = export_data(out, include_dataset=not args.no_dataset)
+    size_mb = out.stat().st_size / 1024 / 1024
+    print(f"Готово: {size_mb:.0f} МБ. Файлов: " + ", ".join(f"{k} {v}" for k, v in summary.items()))
+    print("В архиве ключи шифрования и паспортные данные — передавайте только по scp/ssh.")
+    return 0
+
+
+def cmd_relocate_paths(args: argparse.Namespace) -> int:
+    from web import config
+    from web.migrate import RELOCATED_MARK, manifest_root, relocate_paths
+
+    mark = config.DATA_DIR / RELOCATED_MARK
+    old_root = (args.old_root or "").strip() or manifest_root(config.DATA_DIR.parent)
+    if args.if_needed and (mark.exists() or not old_root):
+        return 0
+    if not old_root:
+        print("Укажи --old-root или положи MANIFEST.json рядом с каталогом данных", file=sys.stderr)
+        return 1
+
+    init_db()
+    with session_scope() as session:
+        changed = relocate_paths(session, old_root)
+    mark.write_text(old_root + "\n", encoding="utf-8")
+    print(f"Пути из {old_root} переписаны: " + ", ".join(f"{k} {v}" for k, v in changed.items()))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # Сообщения на русском: без этого консоль Windows в cp1251 печатает мусор
     # вместо «Администратор создан».
@@ -134,6 +170,17 @@ def main(argv: list[str] | None = None) -> int:
     reset.set_defaults(func=cmd_reset_password)
 
     sub.add_parser("list-users", help="список пользователей").set_defaults(func=cmd_list_users)
+
+    export = sub.add_parser("export-data", help="архив данных для переезда на другую машину")
+    export.add_argument("--out", default="ticket-data.tar.gz")
+    export.add_argument("--no-dataset", action="store_true", help="без набора капч (он большой)")
+    export.set_defaults(func=cmd_export_data)
+
+    relocate = sub.add_parser("relocate-paths", help="переписать пути старой машины в базе")
+    relocate.add_argument("--old-root", help="корень проекта на старой машине (иначе из MANIFEST.json)")
+    relocate.add_argument("--if-needed", action="store_true",
+                          help="только если есть MANIFEST.json и это ещё не делалось")
+    relocate.set_defaults(func=cmd_relocate_paths)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

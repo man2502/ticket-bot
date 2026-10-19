@@ -16,6 +16,10 @@ from dotenv import load_dotenv
 from core.env import env
 
 RAILWAY_ROOT = Path(__file__).resolve().parent
+# Где бот хранит журнал броней, состояние и кэш станций. В контейнере — том с
+# данными (RAILWAY_DATA_DIR), иначе пересборка образа стёрла бы журнал, а с ним
+# и защиту от двойной брони. Панель читает журнал по тому же пути.
+RAILWAY_DATA_DIR = Path(os.getenv("RAILWAY_DATA_DIR") or RAILWAY_ROOT)
 DEFAULT_ENV = RAILWAY_ROOT / "check.env"
 LOCAL_ENV = RAILWAY_ROOT / ".env.local"
 

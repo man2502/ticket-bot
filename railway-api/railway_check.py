@@ -44,7 +44,7 @@ from notify_helper import (
 )
 from passenger_loader import format_passenger_names, get_passenger_ids
 from railway_client import RequestFailed, ResultUnknown, warmup_connection
-from railway_env import env, load_railway_env, route_line, to_railway_date
+from railway_env import RAILWAY_DATA_DIR, env, load_railway_env, route_line, to_railway_date
 from railway_stations import StationsError, format_station, get_stations
 from railway_booking import (
     BOOKINGS_JOURNAL,
@@ -79,7 +79,7 @@ from railway_trips import (
     wagon_type_ids,
 )
 
-STATE_FILE = RAILWAY_ROOT / "railway_state.json"
+STATE_FILE = RAILWAY_DATA_DIR / "railway_state.json"
 
 
 # Разброс вокруг отметки для второго и следующих слотов минуты. При периоде

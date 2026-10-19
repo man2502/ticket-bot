@@ -8,8 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from railway_client import api_request
+from railway_env import RAILWAY_DATA_DIR
 
-STATIONS_CACHE_FILE = Path(__file__).resolve().parent / "railway_stations.json"
+# Свежий кэш пишем в каталог данных; список из репозитория — запасной, на
+# случай первого запуска в новом месте, пока станции не обновлены.
+STATIONS_CACHE_FILE = RAILWAY_DATA_DIR / "railway_stations.json"
+BUNDLED_STATIONS_FILE = Path(__file__).resolve().parent / "railway_stations.json"
 
 _STATIONS: list[dict[str, Any]] | None = None
 _STATION_NAMES: dict[str, str] | None = None
@@ -76,13 +80,14 @@ def save_stations_cache(stations: list[dict[str, Any]]) -> Path:
 
 
 def load_stations_cache() -> list[dict[str, Any]]:
-    if not STATIONS_CACHE_FILE.exists():
+    source = STATIONS_CACHE_FILE if STATIONS_CACHE_FILE.exists() else BUNDLED_STATIONS_FILE
+    if not source.exists():
         return []
 
     try:
-        raw = json.loads(STATIONS_CACHE_FILE.read_text(encoding="utf-8"))
+        raw = json.loads(source.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise StationsError(f"{STATIONS_CACHE_FILE.name}: битый JSON: {exc}") from exc
+        raise StationsError(f"{source.name}: битый JSON: {exc}") from exc
 
     if isinstance(raw, dict):
         stations = raw.get("stations")

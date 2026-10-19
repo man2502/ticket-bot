@@ -65,3 +65,7 @@ captcha_model_api.prev.*
 
 # --- лестница пауз после 429 (запуск из командной строки) ---
 api_rate_limit.json
+
+# Том контейнера и архивы переезда (docker-compose.yml, DEPLOY.md)
+/data/
+*.tar.gz

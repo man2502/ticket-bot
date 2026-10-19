@@ -41,7 +41,7 @@ from core.booking_guard import (  # noqa: E402
 )
 
 from web.models import Booking, Job, JobStatus, Service  # noqa: E402
-from web.services.bot_env import SERVICE_JOURNALS, SERVICE_DIRS  # noqa: E402
+from web.services.bot_env import SERVICE_DATA_DIRS, SERVICE_JOURNALS  # noqa: E402
 
 __all__ = [
     "Journal",
@@ -78,7 +78,7 @@ STATUS_TITLES = {
 
 def journal_path(service: str) -> Path:
     """Файл журнала броней конкретного бота."""
-    return SERVICE_DIRS[service] / SERVICE_JOURNALS[service]
+    return SERVICE_DATA_DIRS[service] / SERVICE_JOURNALS[service]
 
 
 def _guard(service: str) -> BookingGuard:

@@ -8,7 +8,9 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DATASET_DIR = ROOT / "captcha_dataset_api"
+# В контейнере набор живёт в томе с данными (CAPTCHA_API_DATASET_DIR), иначе
+# пересборка образа стёрла бы десятки тысяч размеченных картинок.
+DATASET_DIR = Path(os.getenv("CAPTCHA_API_DATASET_DIR") or ROOT / "captcha_dataset_api")
 CONFIRMED_DIR = DATASET_DIR / "confirmed"
 HARD_DIR = DATASET_DIR / "hard"
 REJECTED_DIR = DATASET_DIR / "rejected"
