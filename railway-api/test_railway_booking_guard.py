@@ -213,6 +213,39 @@ def test_parse_server_rejection_is_certain_failure() -> None:
     assert result.certain_failure is True
 
 
+def test_parse_structured_error_is_certain_failure() -> None:
+    """Отказ проверки входных данных — брони нет, блокировать автобронь не за что."""
+    result = parse_booking_response({
+        "success": False,
+        "error": {"id": "input.invalidInputParam", "message": "input variables are not compatible"},
+    })
+    assert result.certain_failure is True
+    assert "input variables are not compatible" in result.error
+    assert "input.invalidInputParam" in result.error
+
+
+def test_request_summary_has_tariffs_and_ages_but_no_documents() -> None:
+    from railway_booking import request_summary
+
+    payload = {
+        "passengers": [
+            {"tariff": "adult", "dob": "16-01-1973", "identity_number": "I-AS 000000",
+             "name": "Имя", "surname": "Фамилия"},
+            {"tariff": "child", "dob": "01-01-2011"},
+        ],
+        "outbound": {"selected_journeys": [{"id": 1, "seats": [{"id": 1}, {"id": 2}]}]},
+    }
+    line = request_summary(payload, {"departure_time": "2026-10-20T17:22:00+05:00"},
+                           [{"type": "adult"}, {"type": "child"}])
+
+    assert "adult 53 лет" in line
+    assert "child 15 лет" in line
+    assert "мест 2" in line
+    assert "поиск adult=1 child=1" in line
+    for secret in ("I-AS", "Имя", "Фамилия"):
+        assert secret not in line
+
+
 def test_parse_5xx_is_unknown() -> None:
     result = parse_booking_response({"success": True, "data": {}}, status=503)
     assert result.unknown is True

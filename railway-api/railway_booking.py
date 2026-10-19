@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -162,6 +163,44 @@ def build_booking_payload(
     return payload
 
 
+def request_summary(
+    payload: dict[str, Any], journey: dict[str, Any], passengers: list[dict] | None = None
+) -> str:
+    """
+    Что ушло в бронь — без имён и документов. Печатается при отказе сервера.
+
+    «input variables are not compatible» сервер отдаёт без подробностей; по этой
+    строке видно главное подозрение: тариф против возраста и число пассажиров
+    в поиске против числа в брони.
+    """
+    from passenger_loader import age_on_date, parse_dob
+
+    departure = str(journey.get("departure_time") or "")[:10]
+    try:
+        on = dt.date.fromisoformat(departure)
+    except ValueError:
+        on = dt.date.today()
+
+    people = []
+    for pax in payload.get("passengers") or []:
+        try:
+            age = f"{age_on_date(parse_dob(str(pax.get('dob') or '')), on)} лет"
+        except (ValueError, RuntimeError):
+            age = "возраст ?"
+        people.append(f"{pax.get('tariff')} {age}")
+
+    seats = (payload.get("outbound") or {}).get("selected_journeys") or [{}]
+    seat_count = len(seats[0].get("seats") or [])
+    # Поиск считает так же, как railway_pax_counts: infant уходит в child.
+    types = [str(p.get("type") or "") for p in passengers or []]
+    search = (
+        f"поиск adult={max(1, types.count('adult'))} "
+        f"child={types.count('child') + types.count('infant')}"
+        if types else "поиск ?"
+    )
+    return f"тарифы: {', '.join(people) or '—'}; мест {seat_count}; {search}"
+
+
 def _short(value: Any, limit: int = 300) -> str:
     text = str(value)
     return text if len(text) <= limit else f"{text[:limit]}… (+{len(text) - limit} симв.)"
@@ -187,6 +226,15 @@ def parse_booking_response(body: dict[str, Any] | str, *, status: int = 200) -> 
         if message:
             # Сервер явно отказал — брони нет.
             return BookingResult(ok=False, error=message)
+        # Тот же отказ, но в другой обёртке: {"error": {"id": ..., "message": ...}}.
+        # Так сервер отвечает на проверку входных данных (input.invalidInputParam) —
+        # бронь он даже не начинал. Раньше это шло в «под вопросом» и блокировало
+        # автобронь до ручной проверки кабинета, хотя проверять было нечего.
+        error = body.get("error")
+        if isinstance(error, dict) and (error.get("id") or error.get("message")):
+            text = str(error.get("message") or "").strip() or "отказ сервера"
+            code = str(error.get("id") or "").strip()
+            return BookingResult(ok=False, error=f"{text} ({code})" if code else text)
         return BookingResult(ok=False, unknown=True, error=f"success=false без message: {_short(body)}")
 
     data = body.get("data")
@@ -416,6 +464,8 @@ def try_auto_book(
 
     if not result.ok:
         result.error = f"{result.error} (HTTP {status})"
+        if verbose:
+            print(red(f"[book-railway] запрос: {request_summary(payload, journey, passengers)}"))
         if result.unknown:
             guard.mark_unknown(key, result.error)
         else:
