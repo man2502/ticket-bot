@@ -48,6 +48,12 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     db_module.init_db()
     with db_module.session_scope() as session:
+        # Контакт брони — как у рабочей панели: без него запуск отказывает раньше,
+        # чем дойдёт до блокировки, которую здесь проверяем.
+        from web.services.settings import save_settings
+
+        save_settings(session, {"default_notify_email": "pay@example.com",
+                                "default_notify_phone": "+99361000000"})
         yield session
 
 

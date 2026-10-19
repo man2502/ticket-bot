@@ -135,6 +135,7 @@ def _format_env(values: dict[str, Any]) -> str:
 def _railway_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> dict[str, Any]:
     config = get_service_config(db, Service.RAILWAY.value)
     params = job.params
+    contact_email, contact_phone = booking_contacts(db, job)
 
     values: dict[str, Any] = {
         # Рассылку берёт на себя панель — бот не должен ни слать письма,
@@ -150,6 +151,10 @@ def _railway_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> dic
         "RAILWAY_AUTO_BOOK": "1" if config.auto_book else "0",
         "RAILWAY_MULTIMEDIA": "1" if params.get("multimedia") else "0",
         "RAILWAY_STRICT": "1" if params.get("strict") else "0",
+        # Контакт брони. Без него бот брал почту и телефон первого пассажира,
+        # а если их нет — слал пустые, и сервер отвечал input.invalidInputParam.
+        "RAILWAY_CONTACT_EMAIL": contact_email,
+        "RAILWAY_CONTACT_PHONE": contact_phone,
     }
 
     # Тип вагона и выбор поезда — необязательные: без них бот смотрит все.

@@ -63,7 +63,9 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         # У рабочей панели он заполнен, тесты стартуют из того же состояния.
         from web.services.settings import save_settings
 
-        save_settings(session, {"default_notify_email": "pay@example.com"})
+        # Поездам нужен ещё и телефон (иначе input.invalidInputParam).
+        save_settings(session, {"default_notify_email": "pay@example.com",
+                                "default_notify_phone": "+99361000000"})
         yield session
 
 
@@ -815,13 +817,31 @@ def test_contact_is_not_required_without_auto_book(db) -> None:
     assert _missing_booking_contact(db, job) == ""
 
 
-def test_railway_needs_no_contact(db) -> None:
-    """У поездов свой поток брони — эта проверка не про них."""
+def test_railway_needs_email_and_phone(db) -> None:
+    """Без контакта сервер поездов отвечает input.invalidInputParam — ловим до запуска."""
+    from web.models import Passenger
     from web.services.runner import _missing_booking_contact
     from web.services.settings import save_settings
 
-    save_settings(db, {"default_notify_email": ""})
+    save_settings(db, {"default_notify_email": "me@example.com", "default_notify_phone": ""})
+    for pax in db.query(Passenger).all():
+        pax.phone = ""
+    db.commit()
+    assert "телефон" in _missing_booking_contact(db, _make_job(db, "railway"))
+
+    save_settings(db, {"default_notify_phone": "+99361000000"})
     assert _missing_booking_contact(db, _make_job(db, "railway")) == ""
+
+
+def test_railway_env_passes_booking_contact(db) -> None:
+    from web.services.bot_env import prepare_launch
+    from web.services.settings import save_settings
+
+    save_settings(db, {"default_notify_email": "me@example.com",
+                       "default_notify_phone": "+99361000000"})
+    env = _env_values(prepare_launch(db, _make_job(db, "railway")).env_file)
+    assert env["RAILWAY_CONTACT_EMAIL"] == "me@example.com"
+    assert env["RAILWAY_CONTACT_PHONE"] == "+99361000000"
 
 
 def test_empty_flight_choice_means_any(db) -> None:

@@ -230,21 +230,29 @@ def _missing_booking_contact(db, job: Job) -> str:
     При выключенной автоброни контакты не нужны: бот только смотрит и
     сообщает, а бронирует человек руками.
     """
-    if job.service != Service.AIRLINES.value:
-        return ""
-
     from web.services.bot_env import booking_contacts
     from web.services.settings import get_service_config
 
     if not get_service_config(db, job.service).auto_book:
         return ""
 
-    email, _phone = booking_contacts(db, job)
-    if email:
-        return ""
+    email, phone = booking_contacts(db, job)
+    # Почта и телефон пассажира — законный запасной вариант: бот подставит сам.
+    email = email or any((link.passenger.email or "").strip() for link in job.passengers)
+    phone = phone or any((link.passenger.phone or "").strip() for link in job.passengers)
 
-    # Почта пассажира — законный запасной вариант: бот подставит её сам.
-    if any((link.passenger.email or "").strip() for link in job.passengers):
+    if job.service == Service.RAILWAY.value:
+        # Поездам нужны оба поля: без любого сервер отвечает input.invalidInputParam.
+        missing = [name for name, value in (("email", email), ("телефон", phone)) if not value]
+        if not missing:
+            return ""
+        return (
+            f"Не задан {' и '.join(missing)} для брони. Сервер перевозчика без них отказывает. "
+            "Заполните «Куда слать ссылку на оплату» и телефон в настройках панели, "
+            "в самом процессе или у пассажира."
+        )
+
+    if email:
         return ""
 
     return (

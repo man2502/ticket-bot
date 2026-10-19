@@ -106,6 +106,21 @@ def _tariff_api(pax_type: str) -> str:
     return "adult"
 
 
+def booking_contact(passengers: list[dict]) -> tuple[str, str]:
+    """
+    (email, телефон) для брони: настройки процесса → любой пассажир, у кого есть.
+
+    Раньше брался только первый пассажир. Если почта и телефон были у второго,
+    в бронь всё равно уходили пустые поля.
+    """
+    email = env("RAILWAY_CONTACT_EMAIL").strip()
+    phone = _normalize_phone(env("RAILWAY_CONTACT_PHONE"))
+    for pax in passengers:
+        email = email or str(pax.get("email") or "").strip()
+        phone = phone or _normalize_phone(str(pax.get("phone") or ""))
+    return email or env("NOTIFY_EMAIL").strip(), phone
+
+
 def build_booking_payload(
     *,
     journey_id: int,
@@ -120,8 +135,16 @@ def build_booking_payload(
 
     first = passengers[0]
     contact_name = f"{first['first_name']} {first['last_name']}".strip()
-    contact_email = first.get("email") or env("NOTIFY_EMAIL") or ""
-    contact_phone = _normalize_phone(first.get("phone") or "")
+    contact_email, contact_phone = booking_contact(passengers)
+    missing = [name for name, value in (("email", contact_email), ("телефон", contact_phone))
+               if not value]
+    if missing:
+        # Сервер на пустой контакт отвечает невнятным «input variables are not
+        # compatible». Ловим заранее: POST не уходит, брони точно нет.
+        raise BookingError(
+            f"нет контакта для брони ({', '.join(missing)}): задайте RAILWAY_CONTACT_EMAIL/"
+            "RAILWAY_CONTACT_PHONE или почту и телефон пассажира"
+        )
 
     payload: dict[str, Any] = {
         "contact": {

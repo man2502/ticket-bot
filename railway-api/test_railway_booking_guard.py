@@ -224,6 +224,40 @@ def test_parse_structured_error_is_certain_failure() -> None:
     assert "input.invalidInputParam" in result.error
 
 
+def _pax(**extra) -> dict:
+    return {"first_name": "A", "last_name": "B", "dob": "01.01.1980", "type": "adult",
+            "gender": "M", "doc_number": "X", **extra}
+
+
+def test_contact_is_taken_from_any_passenger(monkeypatch) -> None:
+    """Случай из жизни: у первого пассажира нет ни почты, ни телефона, у второго есть."""
+    from railway_booking import booking_contact
+
+    for name in ("RAILWAY_CONTACT_EMAIL", "RAILWAY_CONTACT_PHONE", "NOTIFY_EMAIL"):
+        monkeypatch.setenv(name, "")
+    email, phone = booking_contact([_pax(), _pax(email="b@example.com", phone="+99361000000")])
+    assert email == "b@example.com"
+    assert phone == "+99361000000"
+
+
+def test_process_contact_wins_over_passenger(monkeypatch) -> None:
+    from railway_booking import booking_contact
+
+    monkeypatch.setenv("RAILWAY_CONTACT_EMAIL", "pay@example.com")
+    monkeypatch.setenv("RAILWAY_CONTACT_PHONE", "+99365000000")
+    assert booking_contact([_pax(email="b@example.com")]) == ("pay@example.com", "+99365000000")
+
+
+def test_booking_without_contact_is_not_sent(monkeypatch) -> None:
+    """Пустой контакт — отказ до POST, а не невнятный invalidInputParam от сервера."""
+    from railway_booking import BookingError, build_booking_payload
+
+    for name in ("RAILWAY_CONTACT_EMAIL", "RAILWAY_CONTACT_PHONE", "NOTIFY_EMAIL"):
+        monkeypatch.setenv(name, "")
+    with pytest.raises(BookingError, match="телефон"):
+        build_booking_payload(journey_id=1, seats=[object()], passengers=[_pax(email="a@b.c")])
+
+
 def test_request_summary_has_tariffs_and_ages_but_no_documents() -> None:
     from railway_booking import request_summary
 
