@@ -146,7 +146,7 @@
         {% for p in providers %}
           <option value="{{ p.id }}" {% if form.provider == p.id|string %}selected{% endif %}
                   {% if not p.is_enabled %}disabled{% endif %}>
-            {{ p.title }} — {{ p.state }}
+            {{ p.title }} ({{ p.ip_title }}) — {{ p.state }}
           </option>
         {% endfor %}
       </select>

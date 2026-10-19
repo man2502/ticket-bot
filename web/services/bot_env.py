@@ -233,7 +233,11 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
         "API_CAPTCHA_IMAGE": passengers_file.parent / "captcha_last.png",
         # Лестница пауз после 429 — ОДНА на все процессы самолётов: все они
         # ходят с одного адреса, и 429 у одного аккаунта — пауза для всех.
-        "API_RATE_LIMIT_STATE": rate_limit_state_path(),
+        # Аккаунт ходит со своего адреса, и лестница 429 у адреса своя.
+        # Без явного адреса бот уйдёт с адреса по умолчанию — его и записали
+        # в job.source_ip при запуске.
+        "API_SOURCE_IP": provider.source_ip,
+        "API_RATE_LIMIT_STATE": rate_limit_state_path(job.source_ip),
         # Чей аккаунт поймал 429 — для журнала ошибок и письма о стопе.
         "API_PROVIDER_NAME": provider.title,
         "API_AUTO_BOOK": "1" if config.auto_book else "0",

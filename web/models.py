@@ -313,6 +313,10 @@ class Provider(Base):
     # несколько аккаунтов с одного адреса в одну и ту же секунду — это
     # ровно та картина, по которой сайт режет запросы.
     check_at_second: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Исходящий адрес машины, с которого ходит аккаунт. Пусто — адрес по
+    # умолчанию. Аккаунт всегда с одного IP: аккаунт, который сегодня с одного
+    # адреса, а завтра с другого, для сайта выглядит подозрительно.
+    source_ip: Mapped[str] = mapped_column(String(45), default="")
 
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
@@ -355,6 +359,10 @@ class Job(Base):
     provider_id: Mapped[int | None] = mapped_column(
         ForeignKey("providers.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Реальный исходящий адрес на момент запуска (адрес «по умолчанию» тоже
+    # записан явным IP). По нему панель следит, чтобы с одного IP шёл один
+    # процесс: правка аккаунта во время работы этого не сломает.
+    source_ip: Mapped[str] = mapped_column(String(45), default="")
 
     # Куда слать ссылку на оплату. Пусто — берётся из общих настроек.
     notify_email: Mapped[str] = mapped_column(String(255), default="")
@@ -622,6 +630,7 @@ class ErrorEvent(Base):
     provider_id: Mapped[int | None] = mapped_column(
         ForeignKey("providers.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    source_ip: Mapped[str] = mapped_column(String(45), default="")
     service: Mapped[str] = mapped_column(String(16), default="", index=True)
     key: Mapped[str] = mapped_column(String(32), index=True)
     status: Mapped[int | None] = mapped_column(Integer, nullable=True)

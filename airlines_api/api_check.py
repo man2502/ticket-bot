@@ -1251,9 +1251,35 @@ def auth_debug_enabled() -> bool:
     return (env("API_DEBUG_AUTH") or "0").strip().lower() not in ("0", "false", "no")
 
 
+def check_source_ip() -> str:
+    """
+    Проверить исходящий адрес до первого запроса. Пусто — всё в порядке.
+
+    Без проверки бот с адресом, которого нет на машине, падал бы на каждом
+    запросе с «Cannot assign requested address» — а молча уйти с другого IP
+    нельзя: аккаунт привязан к своему адресу, и лестница 429 у адреса своя.
+    """
+    from api_client import source_ip
+    from core.netaddr import can_bind
+
+    ip = source_ip()
+    if not ip:
+        return ""
+    if not can_bind(ip):
+        return f"исходящего адреса {ip} нет на этой машине"
+    print(f"[net] исходящий адрес: {ip}")
+    return ""
+
+
 def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
     secrets_file = api_secrets_env_path()
     headers: dict[str, str] | None = None
+
+    ip_problem = check_source_ip()
+    if ip_problem:
+        print(_red(f"[net] {ip_problem} — запускать не с чего"))
+        report_error("network", detail=ip_problem)
+        return 1
 
     for attempt in range(1, 6):
         try:

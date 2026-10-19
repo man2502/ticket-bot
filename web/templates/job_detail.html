@@ -71,6 +71,12 @@
             {% if not job.params.get('provider') %}<span class="muted small">(любой свободный)</span>{% endif %}
           </td>
         </tr>
+        {% if job.source_ip %}
+        <tr>
+          <th>Исходящий адрес</th>
+          <td><code>{{ job.source_ip }}</code> <span class="muted small">на момент запуска</span></td>
+        </tr>
+        {% endif %}
         {% endif %}
         <tr>
           <th>Пассажиры</th>

@@ -154,6 +154,7 @@ def _assign_provider(db, job: Job) -> None:
     если человек просил «любой»: иначе перезапуск остановленного процесса
     упирался бы в аккаунт, который тем временем занял кто-то другой.
     """
+    from core.netaddr import can_bind
     from web.services.bookings import provider_blocker
     from web.services.providers import (
         busy_provider_ids,
@@ -162,18 +163,20 @@ def _assign_provider(db, job: Job) -> None:
         provider_missing,
         running_count,
     )
+    from web.services.rate_limit import start_blocker as rate_limit_blocker
     from web.services.settings import get_service_config
+    from web.services.source_ips import busy_ips, effective_ip
 
     config = get_service_config(db, job.service)
     running = running_count(db, job.service, exclude_job_id=job.id)
     if running >= config.max_parallel:
         raise JobStartError(
             f"Уже работает процессов самолётов: {running} — это предел из настроек "
-            f"({config.max_parallel}). Все аккаунты ходят с одного адреса, и сайт "
-            f"режет запросы по адресу."
+            f"({config.max_parallel})."
         )
 
     busy = busy_provider_ids(db, exclude_job_id=job.id)
+    ip_busy = busy_ips(db, exclude_job_id=job.id)
 
     def problem_with(provider) -> str:
         if not provider.is_enabled:
@@ -183,6 +186,16 @@ def _assign_provider(db, job: Job) -> None:
             return "не заполнено: " + ", ".join(missing)
         if provider.id in busy:
             return f"занят процессом #{busy[provider.id]}"
+        # Один адрес — один процесс: сайт считает запросы по IP, и два
+        # аккаунта с одного адреса для него — один удвоенный поток.
+        if provider.source_ip and not can_bind(provider.source_ip):
+            return f"адреса {provider.source_ip} нет на этой машине"
+        ip = effective_ip(provider)
+        if ip and ip in ip_busy:
+            return f"адрес {ip} занят процессом #{ip_busy[ip]}"
+        stopped = rate_limit_blocker(ip)
+        if stopped:
+            return stopped
         blocker = provider_blocker(db, provider.id)
         if blocker is not None:
             record = blocker.record
@@ -200,6 +213,7 @@ def _assign_provider(db, job: Job) -> None:
         if problem:
             raise JobStartError(f"Аккаунт «{provider.title}»: {problem}")
         job.provider = provider
+        job.source_ip = effective_ip(provider)
         return
 
     providers = list_providers(db, job.service)
@@ -213,6 +227,7 @@ def _assign_provider(db, job: Job) -> None:
         problem = problem_with(provider)
         if not problem:
             job.provider = provider
+            job.source_ip = effective_ip(provider)
             return
         reasons.append(f"«{provider.title}» — {problem}")
 
@@ -295,12 +310,7 @@ def start_job(db, job: Job) -> None:
     if contact_problem:
         raise JobStartError(contact_problem)
 
-    if job.service == Service.AIRLINES.value:
-        from web.services.rate_limit import start_blocker as rate_limit_blocker
-
-        stopped = rate_limit_blocker()
-        if stopped:
-            raise JobStartError(stopped)
+    # Стоп после 429 проверен при выборе аккаунта — он свой у каждого адреса.
 
     # Незакрытая попытка брони в журнале — бот при запуске остановится сам.
     # Говорим об этом заранее, иначе процесс просто завершится через секунду,
@@ -475,6 +485,7 @@ def _record_error_event(db, job_id: int, line: str) -> None:
         ErrorEvent(
             job_id=job_id,
             provider_id=job.provider_id if job else None,
+            source_ip=job.source_ip if job else "",
             service=job.service if job else "",
             **parsed,
         )
@@ -552,20 +563,23 @@ def _notify_rate_limit_stop(db, job: Job) -> None:
     from web.services.rate_limit import status_view, stop_notice_key
     from web.services.settings import get_setting, save_settings
 
-    key = stop_notice_key()
+    ip = job.source_ip
+    key = stop_notice_key(ip)
     if not key or get_setting(db, "rate_limit_notified") == key:
         return
     save_settings(db, {"rate_limit_notified": key})
 
-    view = status_view()
+    view = status_view(ip)
     retry = (
         f"{view['last_retry_after']:.0f} с" if view["last_retry_after"] is not None else "не прислал"
     )
-    subject = "Самолёты остановлены: повторные 429"
+    where = ip or "по умолчанию"
+    subject = f"Самолёты остановлены: повторные 429 с адреса {where}"
     body = "\n".join(
         [
             "Сайт перевозчика несколько раз ответил «слишком много запросов» (HTTP 429).",
-            "Все процессы самолётов остановлены, чтобы аккаунты не заблокировали.",
+            f"Процессы самолётов с адреса {where} остановлены, чтобы аккаунты не "
+            "заблокировали. Процессы с других адресов работают дальше.",
             "",
             f"Стоп: {view['headline']}",
             f"Последний 429: {view['last_429_at']}, аккаунт {view['last_source'] or '—'}, "

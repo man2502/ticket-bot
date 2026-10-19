@@ -127,6 +127,9 @@ def save_provider(db, provider: Provider | None, data: dict[str, Any]) -> Provid
     Пароль по тем же правилам, что и в настройках: пустое поле — не менять
     (иначе правка названия стирала бы пароль), «-» — стереть.
     """
+    # Проверяем до любых правок: на ошибке аккаунт должен остаться как был.
+    source_ip = _checked_source_ip(db, str(data["source_ip"] or "")) if "source_ip" in data else None
+
     if provider is None:
         provider = Provider(service=str(data.get("service") or Service.AIRLINES.value))
         db.add(provider)
@@ -145,6 +148,9 @@ def save_provider(db, provider: Provider | None, data: dict[str, Any]) -> Provid
         elif raw and raw != MASK:
             provider.password_enc = encrypt(raw)
 
+    if source_ip is not None:
+        provider.source_ip = source_ip
+
     if "check_at_second" in data:
         raw = str(data["check_at_second"] if data["check_at_second"] is not None else "").strip()
         if raw == "":
@@ -157,6 +163,27 @@ def save_provider(db, provider: Provider | None, data: dict[str, Any]) -> Provid
 
     db.commit()
     return provider
+
+
+def _checked_source_ip(db, raw: str) -> str:
+    """
+    Адрес для аккаунта — только из списка в настройках. Пусто — по умолчанию.
+
+    Опечатка в адресе не должна молча увести аккаунт на чужой IP: бот с
+    адресом, которого нет на машине, не запустится, а адрес не из списка
+    панель не покажет в лестнице 429.
+    """
+    from web.services.source_ips import SourceIpError, configured_ips, normalize_ip
+
+    try:
+        ip = normalize_ip(raw)
+    except SourceIpError as exc:
+        raise ProviderError(str(exc)) from exc
+    if ip and ip not in {item["ip"] for item in configured_ips(db)}:
+        raise ProviderError(
+            f"Адреса {ip} нет в списке исходящих адресов — добавьте его в настройках самолётов"
+        )
+    return ip
 
 
 def provider_missing(provider: Provider) -> list[str]:
@@ -233,6 +260,7 @@ def providers_view(db, service: str = Service.AIRLINES.value) -> list[dict[str, 
     """Аккаунты с состоянием — всё, что нужно форме, без паролей."""
     from web.services.bookings import provider_blocker
     from web.services.settings import get_service_config
+    from web.services.source_ips import effective_ip, ip_title
 
     config = get_service_config(db, service)
     busy = busy_provider_ids(db)
@@ -266,6 +294,10 @@ def providers_view(db, service: str = Service.AIRLINES.value) -> list[dict[str, 
                     "" if provider.check_at_second is None else str(provider.check_at_second)
                 ),
                 "slot_second": second,
+                "source_ip": provider.source_ip,
+                # Реальный адрес — «по умолчанию» тоже конкретный IP, и его
+                # человек должен видеть: с него может ходить другой аккаунт.
+                "ip_title": ip_title(db, effective_ip(provider)),
                 "slot_auto": provider.check_at_second is None,
                 "busy_job": busy.get(provider.id),
                 "state": state,

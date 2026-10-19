@@ -184,6 +184,17 @@ def _migrate() -> None:
                 )
             )
 
+        # Исходящий адрес: аккаунт привязан к своему IP, процесс и ошибка
+        # помнят, с какого адреса шли (см. core.netaddr).
+        for table in ("providers", "jobs", "error_events"):
+            table_columns = {
+                row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))
+            }
+            if table_columns and "source_ip" not in table_columns:
+                conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN source_ip VARCHAR(45) NOT NULL DEFAULT ''")
+                )
+
     # Отдельным соединением: внутри транзакции PRAGMA foreign_keys не действует.
     _allow_bookings_without_job()
 

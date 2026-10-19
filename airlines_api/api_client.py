@@ -68,6 +68,11 @@ _client: HttpClient | None = None
 _client_base: str = ""
 
 
+def source_ip() -> str:
+    """Исходящий адрес аккаунта (API_SOURCE_IP). Пусто — какой выберет система."""
+    return (env("API_SOURCE_IP") or "").strip()
+
+
 def get_client() -> HttpClient:
     """Один клиент на процесс. Пересоздаётся, если сменился API_BASE_URL."""
     global _client, _client_base
@@ -93,6 +98,7 @@ def get_client() -> HttpClient:
         max_retries=int(_float_env("API_HTTP_RETRIES", 2)),
         name="t5-http",
         debug=(env("API_HTTP_DEBUG") or "0") not in ("0", "false", "no"),
+        source_ip=source_ip(),
     )
     _client_base = current
     return _client

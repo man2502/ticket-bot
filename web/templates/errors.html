@@ -65,7 +65,7 @@
 {% if events %}
 <table class="grid">
   <thead>
-    <tr><th>Когда</th><th>Ошибка</th><th>Аккаунт</th><th>Запрос</th><th>HTTP</th><th>Подробности</th><th>Процесс</th></tr>
+    <tr><th>Когда</th><th>Ошибка</th><th>Аккаунт</th><th>IP</th><th>Запрос</th><th>HTTP</th><th>Подробности</th><th>Процесс</th></tr>
   </thead>
   <tbody>
     {% for e in events %}
@@ -73,6 +73,7 @@
       <td class="muted small">{{ e.created_at.strftime('%d.%m %H:%M:%S') }}</td>
       <td class="small">{{ titles.get(e.key, e.key) }}</td>
       <td class="small">{{ e.provider.title if e.provider else '—' }}</td>
+      <td class="small">{% if e.source_ip %}<code>{{ e.source_ip }}</code>{% else %}—{% endif %}</td>
       <td class="small">{{ e.endpoint or '—' }}</td>
       {# Сетевая ошибка — ответа не было вовсе, кода быть не может. #}
       <td class="small">{% if e.status %}{{ e.status }}{% elif e.key == 'network' %}<span class="muted">нет ответа</span>{% else %}—{% endif %}</td>

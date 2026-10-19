@@ -65,6 +65,15 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         lambda service: journals / f"{service}_bookings.json",
     )
 
+    # Адреса машины — вымышленные и одинаковые на любой машине: настоящий адрес
+    # по умолчанию у каждого свой, а адресов 10.0.0.x на ней нет.
+    import core.netaddr as netaddr
+    import web.services.source_ips as source_ips
+
+    monkeypatch.setattr(source_ips, "default_source_ip", lambda: DEFAULT_IP)
+    monkeypatch.setattr(source_ips, "can_bind", lambda ip: True)
+    monkeypatch.setattr(netaddr, "can_bind", lambda ip: ip != MISSING_IP)
+
     db_module.init_db()
     with db_module.session_scope() as session:
         from web.services.settings import save_service_config, save_settings
@@ -72,6 +81,17 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         save_settings(session, {"default_notify_email": "pay@example.com"})
         save_service_config(session, "airlines", {"extra_password_enc": "пароль-приложения"})
         yield session
+
+
+DEFAULT_IP = "10.0.0.1"
+SECOND_IP = "10.0.0.2"
+MISSING_IP = "10.0.0.99"
+
+
+def _ips(db, *ips: str) -> None:
+    from web.services.source_ips import save_ips_text
+
+    save_ips_text(db, "\n".join(ips))
 
 
 def _provider(db, name: str, *, login: str | None = None, **data):
@@ -565,7 +585,9 @@ def test_two_providers_really_run_at_once(
 
     monkeypatch.setattr(runner, "prepare_launch", fake)
 
-    first, second = _provider(db, "Первый"), _provider(db, "Второй")
+    # Разные адреса: с одного адреса одновременно идёт один процесс.
+    _ips(db, SECOND_IP)
+    first, second = _provider(db, "Первый"), _provider(db, "Второй", source_ip=SECOND_IP)
     a, b = _job(db, doc="AA1"), _job(db, doc="AA2")
     start_job(db, a)
     try:
@@ -676,19 +698,19 @@ def test_pages_are_registered_as_routes() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _stop_now() -> None:
-    """Довести общую лестницу до стопа, как это сделали бы боты."""
+def _stop_now(ip: str = "") -> None:
+    """Довести лестницу адреса до стопа, как это сделали бы боты."""
     from core import rate_limit as rl
     from web.services.rate_limit import state_path
 
     now = rl.time.time()
     for _ in range(rl.STOP_AFTER):
-        decision = rl.register_429(state_path(), retry_after=None, now=now)
-        now = rl.read_state(state_path()).until + 1 if not decision.stop else now
+        decision = rl.register_429(state_path(ip), retry_after=None, now=now)
+        now = rl.read_state(state_path(ip)).until + 1 if not decision.stop else now
 
 
-def test_all_providers_share_one_rate_limit_file(db) -> None:
-    """Все аккаунты ходят с одного адреса — 429 у одного означает паузу для всех."""
+def test_providers_on_one_address_share_one_rate_limit_file(db) -> None:
+    """Аккаунты с одного адреса делят лестницу: 429 у одного — пауза для обоих."""
     from web.services.bot_env import prepare_launch
 
     first, second = _provider(db, "Первый"), _provider(db, "Второй")
@@ -704,7 +726,7 @@ def test_start_is_refused_while_stopped(db) -> None:
     from web.services.runner import JobStartError, start_job
 
     _provider(db, "Первый")
-    _stop_now()
+    _stop_now(DEFAULT_IP)
 
     with pytest.raises(JobStartError) as exc:
         start_job(db, _job(db))
@@ -755,3 +777,175 @@ def test_exit_code_3_is_a_rate_limit_stop() -> None:
     status, message = _EXIT_MEANING[RATE_LIMIT_EXIT_CODE]
     assert status == "failed"
     assert "429" in message
+
+
+# --------------------------------------------------------------------------- #
+# Исходящие адреса: аккаунт привязан к IP, с одного IP — один процесс
+# --------------------------------------------------------------------------- #
+
+
+def _running(db, job) -> None:
+    """Отметить процесс работающим без запуска настоящего бота."""
+    from web.models import JobStatus
+
+    job.status = JobStatus.RUNNING.value
+    db.commit()
+
+
+def test_second_process_on_the_same_address_is_refused(db) -> None:
+    """Два аккаунта на адресе по умолчанию — для сайта это один удвоенный поток."""
+    from web.services.runner import JobStartError, _assign_provider
+
+    _provider(db, "Первый"), _provider(db, "Второй")
+    a = _job(db, doc="AA1")
+    _assign_provider(db, a)
+    assert a.source_ip == DEFAULT_IP
+    _running(db, a)
+
+    with pytest.raises(JobStartError) as exc:
+        _assign_provider(db, _job(db, doc="AA2"))
+    assert f"адрес {DEFAULT_IP} занят процессом #{a.id}" in str(exc.value)
+
+
+def test_default_and_explicit_same_ip_are_one_address(db) -> None:
+    """Аккаунт «по умолчанию» и аккаунт, привязанный к тому же IP, — один адрес."""
+    from web.services.runner import JobStartError, _assign_provider
+
+    _ips(db, DEFAULT_IP, SECOND_IP)
+    first = _provider(db, "Первый", source_ip=DEFAULT_IP)
+    _provider(db, "Третий")  # по умолчанию → тот же DEFAULT_IP
+    a = _job(db, doc="AA1", provider=first)
+    _assign_provider(db, a)
+    _running(db, a)
+
+    with pytest.raises(JobStartError) as exc:
+        _assign_provider(db, _job(db, doc="AA2"))
+    assert "занят" in str(exc.value)
+
+
+def test_free_account_on_another_address_is_picked(db) -> None:
+    from web.services.runner import _assign_provider
+
+    _ips(db, SECOND_IP)
+    _provider(db, "Первый")
+    second = _provider(db, "Второй", source_ip=SECOND_IP)
+    a = _job(db, doc="AA1")
+    _assign_provider(db, a)
+    _running(db, a)
+
+    b = _job(db, doc="AA2")
+    _assign_provider(db, b)
+    assert b.provider.id == second.id
+    assert b.source_ip == SECOND_IP
+
+
+def test_stop_on_one_address_leaves_the_other_working(db) -> None:
+    """Ради этого всё и затевалось: 429 на одном IP не останавливает второй."""
+    from web.services.runner import _assign_provider
+
+    _ips(db, SECOND_IP)
+    _provider(db, "Первый")
+    second = _provider(db, "Второй", source_ip=SECOND_IP)
+    _stop_now(DEFAULT_IP)
+
+    job = _job(db, doc="AA1")
+    _assign_provider(db, job)
+    assert job.provider.id == second.id
+
+
+def test_address_missing_on_machine_is_reported(db) -> None:
+    from web.services.runner import JobStartError, _assign_provider
+
+    _ips(db, MISSING_IP)
+    lost = _provider(db, "Первый", source_ip=MISSING_IP)
+
+    with pytest.raises(JobStartError) as exc:
+        _assign_provider(db, _job(db, choice=lost))
+    assert f"адреса {MISSING_IP} нет на этой машине" in str(exc.value)
+
+
+def test_bot_gets_its_address_and_its_own_ladder(db) -> None:
+    from web.services.bot_env import prepare_launch
+    from web.services.rate_limit import state_path
+    from web.services.runner import _assign_provider
+
+    _ips(db, SECOND_IP)
+    _provider(db, "Первый")
+    second = _provider(db, "Второй", source_ip=SECOND_IP)
+
+    a = _job(db, doc="AA1")
+    _assign_provider(db, a)
+    _running(db, a)
+    b = _job(db, doc="AA2", choice=second)
+    _assign_provider(db, b)
+
+    env_a = _env_values(prepare_launch(db, a).env_file)
+    env_b = _env_values(prepare_launch(db, b).env_file)
+    assert env_a["API_SOURCE_IP"] == ""  # система сама уйдёт с адреса по умолчанию
+    assert env_b["API_SOURCE_IP"] == SECOND_IP
+    assert env_a["API_RATE_LIMIT_STATE"] == str(state_path(DEFAULT_IP))
+    assert env_b["API_RATE_LIMIT_STATE"] == str(state_path(SECOND_IP))
+
+
+def test_account_address_must_be_in_the_list(db) -> None:
+    """Опечатка в адресе не должна молча увести аккаунт на чужой IP."""
+    from web.services.providers import ProviderError
+
+    with pytest.raises(ProviderError):
+        _provider(db, "Первый", source_ip=SECOND_IP)
+    with pytest.raises(ProviderError):
+        _provider(db, "Второй", source_ip="не адрес")
+
+
+def test_bound_address_cannot_be_removed_from_the_list(db) -> None:
+    from web.services.source_ips import SourceIpError, save_ips_text
+
+    _ips(db, SECOND_IP)
+    _provider(db, "Второй", source_ip=SECOND_IP)
+    with pytest.raises(SourceIpError):
+        save_ips_text(db, "")
+
+
+def test_address_list_rejects_garbage_and_duplicates(db) -> None:
+    from web.services.source_ips import SourceIpError, configured_ips, save_ips_text
+
+    with pytest.raises(SourceIpError):
+        save_ips_text(db, "300.1.1.1")
+    with pytest.raises(SourceIpError):
+        save_ips_text(db, f"{SECOND_IP}\n{SECOND_IP} ещё раз")
+    save_ips_text(db, f"{SECOND_IP} 119.119.119.119\n\n")
+    assert configured_ips(db) == [{"ip": SECOND_IP, "label": "119.119.119.119"}]
+
+
+def test_error_events_remember_the_address(db) -> None:
+    from web.models import ErrorEvent
+    from web.services.runner import _assign_provider, _record_error_event
+
+    _provider(db, "Первый")
+    job = _job(db)
+    _assign_provider(db, job)
+    db.commit()
+    _record_error_event(db, job.id, "[err] network | — | — | timeout")
+    db.commit()
+    assert db.query(ErrorEvent).one().source_ip == DEFAULT_IP
+
+
+def test_settings_page_shows_addresses(db) -> None:
+    from starlette.requests import Request
+
+    from web.models import Role, User
+    from web.routes.settings import settings_page
+    from web.security import hash_password
+
+    _ips(db, f"{SECOND_IP} 119.119.119.119")
+    _provider(db, "Второй", source_ip=SECOND_IP)
+    admin = User(login="root", password_hash=hash_password("x" * 8), role=Role.ADMIN.value)
+    db.add(admin)
+    db.commit()
+
+    request = Request({"type": "http", "method": "GET", "path": "/settings",
+                       "headers": [], "query_string": b""})
+    html = settings_page(request, user=admin, db=db).body.decode("utf-8")
+    assert SECOND_IP in html and DEFAULT_IP in html
+    assert "119.119.119.119" in html
+    assert "Проверить IP" in html

@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from web.auth import require_admin
 from web.db import get_db
@@ -21,8 +22,15 @@ from web.services.notifications import (
     sms_configured,
     smtp_configured,
 )
+from core.rate_limit import LADDER_SEC
 from web.services.rate_limit import clear as clear_rate_limit
-from web.services.rate_limit import status_view as rate_limit_status
+from web.services.source_ips import (
+    SourceIpError,
+    check_public_ip,
+    ips_text,
+    ips_view,
+    save_ips_text,
+)
 from web.services.providers import (
     ProviderError,
     delete_provider,
@@ -76,7 +84,7 @@ def _page(
         view["needs_auth"] = service == Service.AIRLINES
         view["has_captcha"] = service == Service.AIRLINES
         view["providers"] = providers_view(db, service.value) if view["needs_auth"] else []
-        view["rate_limit"] = rate_limit_status() if view["needs_auth"] else None
+        view["source_ips"] = ips_view(db) if view["needs_auth"] else []
         services.append(view)
 
     return render(
@@ -85,6 +93,8 @@ def _page(
         user,
         status_code=422 if is_error else 200,
         values=get_all(db),
+        source_ips_text=ips_text(db),
+        rate_limit_ladder=[seconds // 60 for seconds in LADDER_SEC],
         services=services,
         api_key_places=API_KEY_PLACES,
         smtp_ready=smtp_configured(db),
@@ -266,19 +276,49 @@ async def _provider_form(request: Request) -> dict[str, object]:
         "login": str(raw.get("login", "")),
         "password": str(raw.get("password", "")),
         "check_at_second": str(raw.get("check_at_second", "")),
+        "source_ip": str(raw.get("source_ip", "")),
         # Флажок приходит в форме, только если отмечен.
         "is_enabled": "is_enabled" in raw,
     }
 
 
 @router.post("/rate-limit/clear")
-def rate_limit_clear(
+async def rate_limit_clear(
     request: Request,
     user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """Снять стоп после 429 раньше срока — только по решению человека."""
-    return _page(request, user, db, message=clear_rate_limit())
+    ip = str((await request.form()).get("ip", "")).strip()
+    return _page(request, user, db, message=clear_rate_limit(ip))
+
+
+@router.post("/source-ips")
+async def save_source_ips(
+    request: Request,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Список исходящих адресов: по строке «IP подпись»."""
+    text = str((await request.form()).get("source_ips", ""))
+    try:
+        items = save_ips_text(db, text)
+    except SourceIpError as exc:
+        return _page(request, user, db, is_error=True, message=str(exc))
+    return _page(request, user, db, message=f"Исходящих адресов: {len(items)}")
+
+
+@router.post("/source-ips/check")
+async def check_source_ip(
+    request: Request,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Один запрос через адрес — показать, под каким внешним IP его видят."""
+    ip = str((await request.form()).get("ip", "")).strip()
+    # Сетевой запрос до 8 с — в пуле потоков, чтобы не встала вся панель.
+    message = await run_in_threadpool(check_public_ip, ip)
+    return _page(request, user, db, message=message)
 
 
 @router.post("/providers")
@@ -294,7 +334,10 @@ async def create_provider(
     if not str(data["password"]).strip():
         return _page(request, user, db, is_error=True,
                      message="Укажите пароль аккаунта T5")
-    provider = save_provider(db, None, data)
+    try:
+        provider = save_provider(db, None, data)
+    except ProviderError as exc:
+        return _page(request, user, db, is_error=True, message=str(exc))
     return _page(request, user, db, message=f"Аккаунт «{provider.title}» добавлен")
 
 
@@ -309,7 +352,10 @@ async def update_provider(
     if provider is None:
         return _page(request, user, db, is_error=True, message="Аккаунт не найден")
     data = await _provider_form(request)
-    provider = save_provider(db, provider, data)
+    try:
+        provider = save_provider(db, provider, data)
+    except ProviderError as exc:
+        return _page(request, user, db, is_error=True, message=str(exc))
     # Работающий процесс свой check.env уже прочитал — правка подействует
     # со следующего запуска. Говорим об этом, чтобы не ждали эффекта сразу.
     return _page(request, user, db,

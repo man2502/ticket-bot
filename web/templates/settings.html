@@ -35,6 +35,21 @@
   </label>
 {% endmacro %}
 
+{# Адрес аккаунта: «по умолчанию» или один из адресов из списка. #}
+{% macro source_ip_field(value, ips, hint='') %}
+  {% set default = ips | selectattr('is_default') | first %}
+  <label>
+    Исходящий адрес
+    <select name="source_ip">
+      <option value="" {% if not value %}selected{% endif %}>по умолчанию{% if default %} ({{ default.ip }}){% endif %}</option>
+      {% for item in ips if item.configured %}
+      <option value="{{ item.ip }}" {% if item.ip == value %}selected{% endif %}>{{ item.ip }}{% if item.label %} — {{ item.label }}{% endif %}</option>
+      {% endfor %}
+    </select>
+    {% if hint %}<span class="field-hint">{{ hint }}</span>{% endif %}
+  </label>
+{% endmacro %}
+
 {% block content %}
 <h1>Настройки</h1>
 
@@ -257,34 +272,74 @@
     </div>
   </form>
 
-  {% if svc.rate_limit %}
-  {% set rl = svc.rate_limit %}
-  <h3 id="rate-limit">Лимит запросов (HTTP 429)</h3>
-  <div class="page-head">
-    <span>Общая пауза для всех аккаунтов — они ходят с одного адреса.</span>
-    <span class="tag {{ rl.tone }}">{{ rl.headline }}</span>
-  </div>
+  {% if svc.needs_auth %}
+  {# Исходящие адреса. У каждого свой внешний IP и своя лестница 429: сайт режет
+     запросы по адресу, и 429 на одном IP не должен останавливать второй. #}
+  <h3 id="source-ips">Исходящие адреса и лимит запросов (HTTP 429)</h3>
   <p class="muted small">
-    Лестница: {% for m in rl.ladder %}{{ m }} мин → {% endfor %}стоп всех процессов на час.
-    Если сервер прислал Retry-After больше ступени — ждём сколько он сказал.
-    Ступень опускается на одну за каждый час без 429.
+    Каждый аккаунт ходит со своего адреса, и <strong>с одного адреса одновременно
+    идёт один процесс</strong>. Аккаунт без адреса ходит с адреса по умолчанию —
+    это тоже конкретный IP, и он делит его с аккаунтом, привязанным к нему явно.
+    Лестница 429 у каждого адреса своя:
+    {% for m in rate_limit_ladder %}{{ m }} мин → {% endfor %}стоп
+    процессов с этого адреса на час. Retry-After больше ступени — ждём сколько сказал сервер.
   </p>
+
   <table class="grid">
+    <thead>
+      <tr><th>Адрес</th><th>Аккаунты</th><th>Сейчас</th><th>429</th><th></th></tr>
+    </thead>
     <tbody>
-      <tr><th>Ступень</th><td>{{ rl.level }} из {{ rl.stop_after - 1 }}; следующий 429 → {{ rl.next_step }}</td></tr>
-      {% if rl.last_429_at %}
-      <tr><th>Последний 429</th><td>{{ rl.last_429_at }} — {{ rl.last_source or '—' }}, {{ rl.last_endpoint or '—' }}</td></tr>
-      <tr><th>Retry-After</th><td>{% if rl.last_retry_after is not none %}{{ '%.0f'|format(rl.last_retry_after) }} с{% else %}сервер не прислал{% endif %}</td></tr>
-      <tr><th>Всего 429</th><td>{{ rl.events }}</td></tr>
-      {% endif %}
+      {% for item in svc.source_ips %}
+      {% set rl = item.rate_limit %}
+      <tr>
+        <td>
+          <code>{{ item.ip }}</code>{% if item.label %} <span class="muted small">{{ item.label }}</span>{% endif %}
+          {% if item.is_default %}<br><span class="muted small">по умолчанию</span>{% endif %}
+          {% if not item.on_machine %}<br><span class="tag tag-error">нет на этой машине</span>{% endif %}
+        </td>
+        <td class="small">{{ item.accounts | join(', ') or '—' }}</td>
+        <td class="small">
+          {% if item.busy_job %}<a href="/jobs/{{ item.busy_job }}">процесс #{{ item.busy_job }}</a>{% else %}<span class="muted">свободен</span>{% endif %}
+        </td>
+        <td class="small">
+          <span class="tag {{ rl.tone }}">{{ rl.headline }}</span>
+          {% if rl.last_429_at %}<br>последний {{ rl.last_429_at }}, {{ rl.last_endpoint or '—' }},
+            Retry-After {% if rl.last_retry_after is not none %}{{ '%.0f'|format(rl.last_retry_after) }} с{% else %}нет{% endif %};
+            всего {{ rl.events }}{% endif %}
+          <br><span class="muted">следующий 429 → {{ rl.next_step }}</span>
+        </td>
+        <td class="small">
+          <form method="post" action="/settings/source-ips/check" class="inline-form">
+            <input type="hidden" name="ip" value="{{ item.ip }}">
+            <button type="submit" class="secondary-btn">Проверить IP</button>
+          </form>
+          {% if rl.stopped or rl.pause_left_min %}
+          <form method="post" action="/settings/rate-limit/clear" class="inline-form"
+                onsubmit="return confirm('Снять паузу раньше срока? Если сайт всё ещё режет запросы, это верный путь к блокировке аккаунта.')">
+            <input type="hidden" name="ip" value="{{ item.ip }}">
+            <button type="submit" class="secondary-btn">Снять {{ 'стоп' if rl.stopped else 'паузу' }}</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Адрес по умолчанию не определился — нет сети?</td></tr>
+      {% endfor %}
     </tbody>
   </table>
-  {% if rl.stopped or rl.pause_left_min %}
-  <form method="post" action="/settings/rate-limit/clear" class="inline-form"
-        onsubmit="return confirm('Снять паузу раньше срока? Если сайт всё ещё режет запросы, это верный путь к блокировке аккаунта.')">
-    <button type="submit" class="secondary-btn">Снять {{ 'стоп' if rl.stopped else 'паузу' }} раньше срока</button>
+
+  <form method="post" action="/settings/source-ips" class="provider-card">
+    <label>
+      Адреса машины — по строке: <code>IP подпись</code>
+      <textarea name="source_ips" rows="3" placeholder="172.16.16.214 95.95.95.95&#10;172.16.17.214 119.119.119.119">{{ source_ips_text }}</textarea>
+      <span class="field-hint">Внутренний адрес, как в <code>ip addr</code>. Подпись — для себя, например внешний IP.
+        «Проверить IP» покажет, под каким внешним адресом видят запросы.</span>
+    </label>
+    <div class="form-actions">
+      <button type="submit">Сохранить адреса</button>
+    </div>
   </form>
-  {% endif %}
   {% endif %}
 
   {% if svc.needs_auth %}
@@ -317,6 +372,7 @@
       {{ text_field('check_at_second', 'Секунда отметки', p.check_at_second_raw,
                     ('Пусто — авто, сейчас :%02d' % p.slot_second) if p.slot_auto
                     else ('Вручную, :%02d' % p.slot_second)) }}
+      {{ source_ip_field(p.source_ip, svc.source_ips, 'Сейчас: ' ~ p.ip_title) }}
     </div>
     <label class="checkbox">
       <input type="checkbox" name="is_enabled" {% if p.is_enabled %}checked{% endif %}>
@@ -348,6 +404,7 @@
         <span class="field-hint">От личного кабинета T5</span>
       </label>
       {{ text_field('check_at_second', 'Секунда отметки', '', 'Пусто — авто') }}
+      {{ source_ip_field('', svc.source_ips, 'С какого адреса ходит аккаунт') }}
     </div>
     <input type="hidden" name="is_enabled" value="1">
     <div class="form-actions">

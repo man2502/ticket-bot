@@ -174,15 +174,21 @@ class _ResumingHTTPSConnection(http.client.HTTPSConnection):
         session_cache: _SessionCache,
         connect_timeout: float,
         read_timeout: float,
+        source_ip: str = "",
     ) -> None:
         super().__init__(host, port, timeout=connect_timeout, context=context)
         self._session_cache = session_cache
+        self._source_ip = source_ip
         self._connect_timeout = connect_timeout
         self.read_timeout = read_timeout
 
     def connect(self) -> None:  # noqa: D102 — переопределение stdlib
+        # Исходящий адрес — если на машине их несколько, а аккаунт привязан
+        # к одному (см. core.netaddr). Порт 0 — любой свободный.
         sock = socket.create_connection(
-            (self.host, self.port), timeout=self._connect_timeout
+            (self.host, self.port),
+            timeout=self._connect_timeout,
+            source_address=(self._source_ip, 0) if self._source_ip else None,
         )
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         server_hostname = self._tunnel_host or self.host
@@ -234,8 +240,10 @@ class HttpClient:
         backoff_cap: float = 8.0,
         name: str = "http",
         debug: bool = False,
+        source_ip: str = "",
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        self.source_ip = source_ip
         parts = urlsplit(self.base_url)
         if parts.scheme != "https":
             raise ValueError(f"{name}: поддерживается только https, получено {base_url!r}")
@@ -268,6 +276,7 @@ class HttpClient:
             session_cache=self._session_cache,
             connect_timeout=self.connect_timeout,
             read_timeout=read_timeout,
+            source_ip=self.source_ip,
         )
 
     def _ensure_conn(self, read_timeout: float) -> _ResumingHTTPSConnection:
