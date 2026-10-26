@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from web.config import AIRLINES_API_DIR, RAILWAY_DATA_DIR, RAILWAY_DIR, RUNS_DIR
+from web.services.bot_logs import logs_dir
 from web.models import Job, Service
 from web.services.settings import get_service_config, get_service_secret
 
@@ -163,6 +164,8 @@ def _railway_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> dic
         # а если их нет — слал пустые, и сервер отвечал input.invalidInputParam.
         "RAILWAY_CONTACT_EMAIL": contact_email,
         "RAILWAY_CONTACT_PHONE": contact_phone,
+        # Каждый HTTP-запрос — строкой в файл дня (core.http_journal).
+        "BOT_HTTP_LOG_DIR": logs_dir(),
     }
 
     # Тип вагона и выбор поезда — необязательные: без них бот смотрит все.
@@ -219,6 +222,9 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
         # и не должна править файлы модуля.
         "API_SAVE_TOKENS": "0",
         "API_CHECK_PERIOD_SEC": config.check_period_sec,
+        # «Поисков в час» из настроек. Раньше до бота не доходило вовсе:
+        # при 30 в час он делал 60, круглые сутки.
+        "API_MAX_SEARCHES_PER_HOUR": config.max_searches_per_hour,
         # У каждого аккаунта своя секунда: с одного адреса в одну и ту же
         # секунду — ровно та картина, по которой сайт режет запросы.
         "API_CHECK_AT_SEC": provider_slot_second(
@@ -254,6 +260,9 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
         # оставался с пустым полем, если у пассажира не было почты.
         "API_CONTACT_EMAIL": contact_email,
         "API_CONTACT_PHONE": contact_phone,
+        # Каждый HTTP-запрос — строкой в файл дня (core.http_journal):
+        # консоль процесса — окно, а разбор блока требует всей истории.
+        "BOT_HTTP_LOG_DIR": logs_dir(),
     }
 
     if params.get("flight_time"):

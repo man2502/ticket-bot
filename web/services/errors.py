@@ -29,6 +29,8 @@ ERROR_TITLES = {
     "http_5xx": "ошибка сервера (5xx)",
     "booking_failed": "бронь не удалась",
     "booking_unknown": "бронь под вопросом",
+    "account_blocked": "аккаунт заблокирован (450)",
+    "unknown_stop": "стоп: неопознанная ошибка подряд",
     "other": "прочее",
 }
 

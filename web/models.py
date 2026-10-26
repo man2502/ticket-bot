@@ -317,6 +317,11 @@ class Provider(Base):
     # умолчанию. Аккаунт всегда с одного IP: аккаунт, который сегодня с одного
     # адреса, а завтра с другого, для сайта выглядит подозрительно.
     source_ip: Mapped[str] = mapped_column(String(45), default="")
+    # Перевозчик заблокировал аккаунт («Customer Block», HTTP 450). Пока отметка
+    # стоит, панель не запускает с него процессы: каждый запрос с заблокированного
+    # аккаунта — повод продлить блок. Снимает её только человек.
+    blocked_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    blocked_reason: Mapped[str] = mapped_column(String(300), default="")
 
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now, onupdate=_now)

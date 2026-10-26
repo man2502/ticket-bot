@@ -382,6 +382,22 @@
         {% if p.busy_job %}<a href="/jobs/{{ p.busy_job }}">{{ p.state }}</a>{% else %}{{ p.state }}{% endif %}
       </span>
     </div>
+    {% if p.blocked_at %}
+    <div class="alert error">
+      <strong>Перевозчик заблокировал аккаунт.</strong>
+      {% if p.blocked_reason %}Ответ сервера: «{{ p.blocked_reason }}».{% endif %}
+      Процессы с него не запускаются: каждый запрос с заблокированного аккаунта
+      может продлить блок. Снимите отметку, только когда перевозчик подтвердит,
+      что блок снят.
+      <div class="form-actions">
+        <button type="submit" class="secondary-btn"
+                formaction="/settings/providers/{{ p.id }}/unblock"
+                onclick="return confirm('Перевозчик точно снял блок? Бот остановится сам, если нет.')">
+          Блок снят — разрешить запуск
+        </button>
+      </div>
+    </div>
+    {% endif %}
     <div class="field-grid">
       {{ text_field('name', 'Название', p.name, 'Для себя: «Мой», «Рабочий»') }}
       {{ text_field('login', 'Телефон', p.login, 'Например: +99361234567') }}

@@ -11,6 +11,40 @@
   {{ keep_days }} дней.
 </p>
 
+<h2>Ответы сервера за {{ http.hours }} ч</h2>
+<p class="muted small">
+  Каждый запрос ботов по коду ответа. 402 — сервер просит капчу, это обычная
+  часть цикла. Красным — то, что бывает перед блокировкой: 429, 450, 5xx, обрывы.
+</p>
+{% if http.rows %}
+<div class="table-wrap">
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Аккаунт</th>
+      <th>Всего</th>
+      {% for column in http.columns %}
+        <th>{{ column.title }}{% if column.hint %}<br><span class="muted small">{{ column.hint }}</span>{% endif %}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in http.rows %}
+    <tr>
+      <td class="small">{{ row.account }}{% if row.ip %}<br><code>{{ row.ip }}</code>{% endif %}</td>
+      <td><strong>{{ row.total }}</strong></td>
+      {% for cell in row.cells %}
+        <td class="{{ 'error-hot' if cell.hot else '' }}">{% if cell.count %}{{ cell.count }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="alert">За сутки запросов не было — или процессы запущены до обновления панели и пишут журнал после перезапуска.</div>
+{% endif %}
+
 <h2>Сводка за неделю</h2>
 {% if summary.rows %}
 <div class="table-wrap">
@@ -91,5 +125,31 @@
 {{ pager(page, pages, page_url, total=total, page_size=page_size, anchor='#feed') }}
 {% else %}
   {{ empty('check', 'Ошибок нет', 'По этому фильтру ничего не нашлось.') }}
+{% endif %}
+
+<h2 id="files">Файлы журналов</h2>
+<p class="muted small">
+  Файл на день: <strong>запросы</strong> — каждый HTTP-запрос ботов с кодом ответа и телом отказа,
+  <strong>ошибки</strong> — каждая строка <code>[err]</code> с процессом и аккаунтом.
+  Хранятся {{ log_keep_days }} дней. Номера документов и токены в них скрыты.
+</p>
+{% if log_files %}
+<div class="table-wrap">
+<table class="grid">
+  <thead><tr><th>День</th><th>Что</th><th>Размер</th><th></th></tr></thead>
+  <tbody>
+    {% for f in log_files %}
+    <tr>
+      <td class="small">{{ f.day }}</td>
+      <td class="small">{{ f.kind }}</td>
+      <td class="small muted">{{ f.size_kb }} КБ</td>
+      <td class="small"><a href="/errors/logs/{{ f.name }}" download>{{ icon('download', 'icon-sm') }}{{ f.name }}</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+  {{ empty('check', 'Файлов пока нет', 'Появятся с первым запросом ботов после обновления панели.') }}
 {% endif %}
 {% endblock %}

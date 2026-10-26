@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy.orm import Session
 
 from web.auth import require_admin
 from web.db import get_db
 from web.models import User
+from web.services import bot_logs
 from web.services.errors import ERROR_TITLES, KEEP_DAYS, PAGE_SIZE, count, feed, summary
 from web.services.providers import list_providers
 from web.templating import render
@@ -43,6 +44,9 @@ def errors_page(
         "errors.html",
         user,
         summary=summary(db),
+        http=bot_logs.http_summary(),
+        log_files=bot_logs.list_files(),
+        log_keep_days=bot_logs.KEEP_DAYS,
         events=feed(db, provider_id=provider_id, key=key,
                     limit=PAGE_SIZE, offset=(current - 1) * PAGE_SIZE),
         total=total,
@@ -56,3 +60,12 @@ def errors_page(
         chosen_key=key,
         keep_days=KEEP_DAYS,
     )
+
+
+@router.get("/logs/{name}")
+def download_log(name: str, user: User = Depends(require_admin)) -> FileResponse:
+    """Скачать файл журнала. Имя проверяется по формату — путь извне не собрать."""
+    path = bot_logs.file_for_download(name)
+    if path is None:
+        raise HTTPException(status_code=404)
+    return FileResponse(path, filename=name, media_type="text/plain; charset=utf-8")

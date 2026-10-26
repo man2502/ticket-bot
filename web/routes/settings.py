@@ -363,6 +363,22 @@ async def update_provider(
                          f"подхватят изменения после перезапуска.")
 
 
+@router.post("/providers/{provider_id}/unblock")
+def unblock_provider(
+    provider_id: int,
+    request: Request,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Снять отметку о блоке перевозчиком — только по решению человека."""
+    from web.services.providers import clear_block
+
+    provider = get_provider(db, provider_id)
+    if provider is None:
+        return _page(request, user, db, is_error=True, message="Аккаунт не найден")
+    return _page(request, user, db, message=clear_block(db, provider))
+
+
 @router.post("/providers/{provider_id}/delete")
 def remove_provider(
     provider_id: int,

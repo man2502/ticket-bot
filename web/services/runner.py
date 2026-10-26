@@ -23,6 +23,9 @@
     0   бронь создана или места найдены — успех
     2   бронь под вопросом: нажали «подтвердить», ответа нет; нужен человек
     1   ошибка
+    3   стоп после повторных 429
+    4   аккаунт заблокирован перевозчиком (HTTP 450)
+    5   стоп: неопознанная ошибка много циклов подряд
     130 остановлен человеком (KeyboardInterrupt)
 """
 
@@ -189,6 +192,11 @@ def _assign_provider(db, job: Job) -> None:
         missing = provider_missing(provider)
         if missing:
             return "не заполнено: " + ", ".join(missing)
+        if provider.blocked_at is not None:
+            return (
+                f"заблокирован перевозчиком с {provider.blocked_at:%d.%m %H:%M} — "
+                "когда блок снимут, отметьте это в настройках самолётов"
+            )
         if provider.id in busy:
             return f"занят процессом #{busy[provider.id]}"
         # Один адрес — один процесс: сайт считает запросы по IP, и два
@@ -316,6 +324,12 @@ def start_job(db, job: Job) -> None:
         raise JobStartError(contact_problem)
 
     # Стоп после 429 проверен при выборе аккаунта — он свой у каждого адреса.
+
+    from web.services.bot_logs import prune as prune_log_files
+
+    # Файлы журналов — два месяца. Панель живёт неделями без перезапуска,
+    # поэтому уборка и здесь, а не только при старте.
+    prune_log_files()
 
     # Незакрытая попытка брони в журнале — бот при запуске остановится сам.
     # Говорим об этом заранее, иначе процесс просто завершится через секунду,
@@ -492,11 +506,13 @@ def parse_error_line(line: str) -> dict | None:
 
 def _record_error_event(db, job_id: int, line: str) -> None:
     from web.models import ErrorEvent
+    from web.services.bot_logs import append_error
 
     parsed = parse_error_line(line)
     if parsed is None:
         return
     job = db.get(Job, job_id)
+    provider = job.provider if job else None
     db.add(
         ErrorEvent(
             job_id=job_id,
@@ -506,6 +522,19 @@ def _record_error_event(db, job_id: int, line: str) -> None:
             **parsed,
         )
     )
+    append_error(
+        job_id=job_id,
+        service=job.service if job else "",
+        account=provider.title if provider else "",
+        ip=job.source_ip if job else "",
+        **parsed,
+    )
+    # Отметку о блоке ставим по строке журнала, а не по коду выхода: она
+    # должна появиться, даже если процесс потом убьют или панель упадёт.
+    if parsed["key"] == "account_blocked" and provider is not None:
+        from web.services.providers import mark_blocked
+
+        mark_blocked(db, provider, parsed["detail"])
 
 
 # 0xC000013A — код, которым Windows завершает процесс по Ctrl+Break, если тот
@@ -527,9 +556,22 @@ _EXIT_MEANING = {
         "Остановлен после повторных 429 вместе со всеми процессами самолётов. "
         "Не перезапускайте сразу — это и есть путь к блокировке аккаунта.",
     ),
+    4: (
+        JobStatus.FAILED.value,
+        "Аккаунт заблокирован перевозчиком (Customer Block) — процесс остановлен. "
+        "Запуск с этого аккаунта запрещён, пока вы не отметите в настройках, "
+        "что блок снят.",
+    ),
+    5: (
+        JobStatus.FAILED.value,
+        "Остановлен: сервер много циклов подряд отвечает тем, чего бот не понимает. "
+        "Посмотрите «Ошибки» и консоль, прежде чем запускать снова.",
+    ),
 }
 
 RATE_LIMIT_EXIT_CODE = 3
+ACCOUNT_BLOCKED_EXIT_CODE = 4
+UNKNOWN_ERROR_EXIT_CODE = 5
 
 
 def _finish(job_id: int, code: int) -> None:
@@ -564,6 +606,8 @@ def _finish(job_id: int, code: int) -> None:
             _collect_bookings(db, job)
             if code == RATE_LIMIT_EXIT_CODE and not stopped_by_human:
                 _notify_rate_limit_stop(db, job)
+            if code in (ACCOUNT_BLOCKED_EXIT_CODE, UNKNOWN_ERROR_EXIT_CODE) and not stopped_by_human:
+                _notify_stop(db, job, code)
     except Exception as exc:  # noqa: BLE001
         print(f"[runner] job {job_id}: не записал итог: {exc}")
 
@@ -609,6 +653,43 @@ def _notify_rate_limit_stop(db, job: Job) -> None:
         results = notify_booking(
             db, subject=subject, body=body, sms_text=f"{subject}. {view['headline']}"
         )
+    except Exception as exc:  # noqa: BLE001 — уведомление не должно ронять итог процесса
+        db.add(JobLog(job_id=job.id, level=LogLevel.ERROR.value,
+                      text=f"Уведомление о стопе не ушло: {exc}"))
+        db.commit()
+        return
+    for result in results:
+        db.add(JobLog(job_id=job.id,
+                      level=LogLevel.OK.value if result.ok else LogLevel.ERROR.value,
+                      text=f"Уведомление о стопе — {result.channel}: {result.summary()}"))
+    db.commit()
+
+
+def _notify_stop(db, job: Job, code: int) -> None:
+    """Письмо и SMS о стопе процесса: блок аккаунта или неопознанная ошибка подряд."""
+    from web.services.notifications import notify_booking
+
+    account = job.provider.title if job.provider else "—"
+    route = f"{job.source} → {job.destination}, {job.depart_date}"
+    if code == ACCOUNT_BLOCKED_EXIT_CODE:
+        reason = job.provider.blocked_reason if job.provider else ""
+        subject = f"Аккаунт «{account}» заблокирован перевозчиком"
+        lines = [
+            f"Процесс #{job.id} ({route}) остановлен: сервер ответил «Customer Block».",
+            f"Ответ сервера: {reason or '—'}",
+            "",
+            "Запуск с этого аккаунта запрещён. Когда перевозчик снимет блок, "
+            "отметьте это в «Настройки → Самолёты», у аккаунта.",
+        ]
+    else:
+        subject = f"Процесс #{job.id} остановлен: повторная неопознанная ошибка"
+        lines = [
+            f"Аккаунт «{account}», {route}.",
+            "Сервер много циклов подряд отвечает тем, чего бот не понимает. "
+            "Подробности — в разделе «Ошибки» панели.",
+        ]
+    try:
+        results = notify_booking(db, subject=subject, body="\n".join(lines), sms_text=subject)
     except Exception as exc:  # noqa: BLE001 — уведомление не должно ронять итог процесса
         db.add(JobLog(job_id=job.id, level=LogLevel.ERROR.value,
                       text=f"Уведомление о стопе не ушло: {exc}"))

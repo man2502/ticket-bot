@@ -29,6 +29,8 @@ ERROR_KEYS = {
     "http_5xx": "ошибка сервера (5xx)",
     "booking_failed": "бронь не удалась",
     "booking_unknown": "бронь под вопросом",
+    "account_blocked": "аккаунт заблокирован (450)",
+    "unknown_stop": "стоп: неопознанная ошибка подряд",
     "other": "прочее",
 }
 
@@ -50,11 +52,14 @@ def report_error(key: str, *, detail: object = "", status: int | None = None,
 
 
 _ENDPOINT_RE = re.compile(r"/api/v1/([\w/.-]+)")
+# Итог цикла: «GetAirAvailability → HTTP 450: {…}» (api_check.failure_hint).
+_ARROW_RE = re.compile(r"^([\w/.+-]+) → HTTP \d{3}\b")
 
 
 def endpoint_from_text(text: object) -> str:
-    """Запрос из текста сетевой ошибки: «POST /api/v1/GetAirAvailability (…)» → GetAirAvailability."""
-    match = _ENDPOINT_RE.search(str(text or ""))
+    """Запрос из текста ошибки: «POST /api/v1/GetAirAvailability (…)» → GetAirAvailability."""
+    raw = str(text or "")
+    match = _ENDPOINT_RE.search(raw) or _ARROW_RE.match(raw)
     return match.group(1) if match else ""
 
 

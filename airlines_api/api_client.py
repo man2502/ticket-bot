@@ -19,6 +19,9 @@
 
 from __future__ import annotations
 
+import html
+import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -28,11 +31,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core import http_journal  # noqa: E402
 from core.http import HttpClient, RequestFailed, Response, ResultUnknown  # noqa: E402
 from api_env import current_ios_user_agent, env  # noqa: E402
 from api_rate_limit import is_rate_limited_response, on_429, wait_if_paused  # noqa: E402
 
 __all__ = [
+    "ACCOUNT_BLOCKED_EXIT_CODE",
+    "AccountBlocked",
+    "is_account_blocked_response",
     "api_request",
     "api_call",
     "base_url",
@@ -45,6 +52,61 @@ __all__ = [
 ]
 
 DEFAULT_BASE_URL = "https://turkmenistanairlines.tm/api/v1"
+
+# Код выхода «аккаунт заблокирован перевозчиком». Отдельный, как у 429:
+# панель по нему запрещает запуск с этого аккаунта, пока человек не разрешит.
+ACCOUNT_BLOCKED_EXIT_CODE = 4
+
+
+class AccountBlocked(BaseException):
+    """
+    Сервер ответил «Customer Block» (HTTP 450): аккаунт заблокирован.
+
+    Раньше бот принимал это за обычную неудачу цикла и трое суток раз
+    в минуту стучался заблокированным аккаунтом — 4000 отказов подряд.
+    Каждый такой запрос — повод продлить блок, поэтому дальше нельзя ни
+    одного запроса. BaseException, как и RateLimitStop: многочисленные
+    `except Exception` в боте превратили бы стоп в «ошибку цикла, идём дальше».
+    """
+
+    def __init__(self, reason: str, *, status: int, endpoint: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.status = status
+        self.endpoint = endpoint
+
+
+def is_account_blocked_response(status: int, text: str) -> bool:
+    """HTTP 450 или «Customer Block» в теле — с любым статусом."""
+    if status == 450:
+        return True
+    low = (text or "").lower()
+    return "customer block" in low or "аккаунт временно заблокирован" in low
+
+
+_TAG = re.compile(r"<[^>]+>")
+# Приветствие с именем владельца аккаунта: в журнале оно ни к чему.
+_GREETING = re.compile(r"<h\d[^>]*>.*?</h\d>", re.IGNORECASE | re.DOTALL)
+
+
+def block_reason(text: str) -> str:
+    """Коротко, что сказал сервер: «Customer Block: Ваш аккаунт временно заблокирован…»."""
+    try:
+        body = json.loads(text)
+    except (TypeError, ValueError):
+        body = None
+    if isinstance(body, dict):
+        message = str(body.get("message") or "").strip()
+        data = body.get("data")
+        data = data if isinstance(data, str) else ""
+    else:
+        message, data = "", str(text or "")
+    words = " ".join(html.unescape(_TAG.sub(" ", _GREETING.sub(" ", data))).split())
+    # Первые два предложения: третье — телефон и почта поддержки.
+    sentences = re.split(r"(?<=[.!?])\s+", words)
+    detail = " ".join(sentences[:2])[:200]
+    reason = ": ".join(part for part in (message or "Customer Block", detail) if part)
+    return reason
 
 
 def base_url() -> str:
@@ -66,6 +128,8 @@ def _float_env(name: str, default: float) -> float:
 
 _client: HttpClient | None = None
 _client_base: str = ""
+# Блок, пойманный в этом процессе. После него — ни одного запроса.
+_blocked: AccountBlocked | None = None
 
 
 def source_ip() -> str:
@@ -106,11 +170,12 @@ def get_client() -> HttpClient:
 
 def reset_client() -> None:
     """Закрыть соединение (смена окружения, конец теста)."""
-    global _client, _client_base
+    global _client, _client_base, _blocked
     if _client is not None:
         _client.close()
     _client = None
     _client_base = ""
+    _blocked = None
 
 
 def warmup_connection() -> bool:
@@ -145,6 +210,10 @@ def api_call(
     # Неидемпотентный запрос — это CreateBooking. Перед ним пауза уже
     # выдержана в переборе рейсов, ДО записи попытки в журнал: ждать или
     # останавливаться между записью pending и самим POST нельзя.
+    global _blocked
+    if _blocked is not None:
+        raise _blocked
+
     booking = idempotent is False
     if not booking:
         # Общая пауза после 429 — в том числе пойманного другим процессом.
@@ -157,13 +226,30 @@ def api_call(
         request_headers.setdefault("user-agent", current_ios_user_agent())
     request_headers.setdefault("host", api_host())
 
-    response = get_client().request(
-        method,
-        path,
-        headers=request_headers,
-        body=body,
-        idempotent=idempotent,
-    )
+    try:
+        response = get_client().request(
+            method,
+            path,
+            headers=request_headers,
+            body=body,
+            idempotent=idempotent,
+        )
+    except RequestFailed as exc:
+        _journal(method, path, status=0, error=str(exc))
+        raise
+    # getattr: подставные ответы в тестах — не настоящий Response.
+    _journal(method, path, status=response.status, ms=getattr(response, "elapsed_ms", 0.0),
+             attempts=getattr(response, "attempts", 1), text=response.text)
+
+    if is_account_blocked_response(response.status, response.text):
+        _blocked = AccountBlocked(
+            block_reason(response.text), status=response.status, endpoint=path
+        )
+        # Внутри брони не бросаем — по той же причине, что и стоп после 429:
+        # попытка уже записана как pending. CreateBooking вернёт отказ сам,
+        # а следующий же запрос процесса упрётся в блок.
+        if not booking:
+            raise _blocked
 
     if is_rate_limited_response(response.status, response.text):
         on_429(
@@ -174,6 +260,34 @@ def api_call(
             wait=not booking,
         )
     return response
+
+
+def _journal(
+    method: str,
+    path: str,
+    *,
+    status: int,
+    ms: float = 0.0,
+    attempts: int = 1,
+    text: str = "",
+    error: str = "",
+) -> None:
+    """Строка в файловый журнал запросов (core.http_journal)."""
+    record: dict[str, Any] = {
+        "svc": "airlines",
+        "acct": env("API_PROVIDER_NAME") or _masked_phone(),
+        "ip": source_ip(),
+        "m": method,
+        "ep": path,
+        "st": status,
+        "ms": round(ms),
+    }
+    if attempts > 1:
+        record["n"] = attempts
+    if error:
+        record["err"] = http_journal.mask(error)[:300]
+    # Тело — только у отказов: у успешного поиска это сотни килобайт рейсов.
+    http_journal.write(record, body=text if status and not 200 <= status < 300 else "")
 
 
 def _masked_phone() -> str:

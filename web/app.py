@@ -93,6 +93,12 @@ def _on_startup() -> None:
         if removed:
             print(f"[errors] убрано старых ошибок: {removed}")
 
+    from web.services.bot_logs import prune as prune_log_files
+
+    removed = prune_log_files()
+    if removed:
+        print(f"[logs] убрано старых файлов журналов: {removed}")
+
     # Брони, о которых панель не знает: бота могли запустить из командной строки
     # или панель упала между POST и чтением журнала. Ссылка на оплату лежит
     # в журнале бота, и без этого обхода про неё никто бы не узнал.

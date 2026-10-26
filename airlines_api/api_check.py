@@ -52,7 +52,14 @@ from core.slots import (
 )
 from core.booking_guard import BookingGuard
 from core.state import load_json, save_json
-from api_client import RequestFailed, ResultUnknown, api_request, warmup_connection
+from api_client import (
+    ACCOUNT_BLOCKED_EXIT_CODE,
+    AccountBlocked,
+    RequestFailed,
+    ResultUnknown,
+    api_request,
+    warmup_connection,
+)
 from api_auth import (
     AuthFatalError,
     AuthTransientError,
@@ -711,6 +718,83 @@ def error_key_from_text(text: str) -> str | None:
     return None
 
 
+def failure_hint(endpoint: str, status: int, body: dict[str, Any] | str) -> str:
+    """
+    Итог неудачного цикла: «GetAirAvailability → HTTP 450: {…}».
+
+    Раньше здесь было одно тело ответа, и в журнал ошибок код не попадал:
+    4000 ответов «Customer Block» легли туда без статуса, как «прочее».
+    Запрос и код журнал вытаскивает из этой строки сам (api_errors).
+    """
+    return f"{endpoint} → HTTP {status}: {body}"
+
+
+def unknown_error_stop_after() -> int:
+    """После скольких циклов подряд с неопознанной ошибкой останавливаться."""
+    try:
+        return max(2, int(env("API_UNKNOWN_ERROR_STOP_AFTER", "5") or "5"))
+    except ValueError:
+        return 5
+
+
+# Код выхода «стоп: одна и та же неопознанная ошибка подряд».
+UNKNOWN_ERROR_EXIT_CODE = 5
+
+
+class UnknownErrorBreaker:
+    """
+    Предохранитель: неопознанная ошибка N циклов подряд — процесс останавливается.
+
+    Пауза 60–90 с (RepeatedErrorTracker) от такого не спасает: бот отдыхает
+    и снова идёт с тем же запросом, и так сутками. Если сервер раз за разом
+    отвечает чем-то, чего бот не понимает, разумнее позвать человека, чем
+    продолжать. Сетевые сбои и известные ошибки счёт не сбрасывают и не
+    увеличивают; сбрасывает только нормальный цикл.
+    """
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.streak = 0
+
+    def note(self, key: str | None) -> bool:
+        """Учесть итог цикла (None — цикл нормальный). True — пора остановиться."""
+        if key is None:
+            self.streak = 0
+            return False
+        if key != "other":
+            return False
+        self.streak += 1
+        return self.streak >= self.limit
+
+
+def search_min_gap_sec() -> float:
+    """
+    Не чаще скольких секунд между поисками — из «Поисков в час» (API_MAX_SEARCHES_PER_HOUR).
+
+    Настройка была в панели давно, но до бота не доходила: при 30 в час он
+    делал 60, круглые сутки. Лимит переводится в интервал, а не в счётчик
+    за час: 30 поисков подряд и полчаса тишины выглядят для сайта хуже,
+    чем ровный поиск раз в две минуты.
+    """
+    try:
+        limit = int(env("API_MAX_SEARCHES_PER_HOUR", "0") or "0")
+    except ValueError:
+        return 0.0
+    return 3600.0 / limit if limit > 0 else 0.0
+
+
+def wait_for_search_budget(last_check_at: float | None) -> None:
+    """Выдержать интервал из лимита поисков; дальше слот выберет wait_for_check_slot."""
+    gap = search_min_gap_sec()
+    if not gap or last_check_at is None:
+        return
+    # С запасом: следующий слот должен прийтись ровно на конец интервала,
+    # а не на следующую отметку после него.
+    left = last_check_at + gap - time.monotonic() - WARMUP_LEAD_SEC - 1.0
+    if left > 0:
+        precise_sleep(left)
+
+
 def maybe_pause_repeated_error(tracker: RepeatedErrorTracker, key: str) -> None:
     """Пауза 60–90 с, если одна и та же ошибка подряд >3 раз."""
     n = tracker.note(key)
@@ -1083,7 +1167,7 @@ def run_check_once(
                     continue
                 if verbose:
                     print(f"[warn] не captcha и не success: {body1}")
-                return False, [str(body1)], None
+                return False, [failure_hint("GetAirAvailability", status1, body1)], None
 
         captcha_step = 1 if skip_probe else 2
         search_step = 2 if skip_probe else 3
@@ -1190,7 +1274,7 @@ def run_check_once(
 
         if verbose:
             print(f"[error] ответ: {body3}")
-        return False, [str(body3)], None
+        return False, [failure_hint("GetAirAvailability", status3, body3)], None
 
     print("[error] капча не пройдена после всех попыток", file=sys.stderr)
     return False, ["captcha failed"], None
@@ -1272,6 +1356,26 @@ def check_source_ip() -> str:
 
 
 def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
+    """Монитор целиком. Блок аккаунта останавливает его на любом шаге."""
+    try:
+        return _watch_loop(once=once, force_rebook=force_rebook)
+    except AccountBlocked as exc:
+        return stop_on_account_block(exc)
+
+
+def stop_on_account_block(exc: AccountBlocked) -> int:
+    """Аккаунт заблокирован: ни одного запроса больше, человеку — причина."""
+    report_error("account_blocked", status=exc.status, endpoint=exc.endpoint, detail=exc.reason)
+    print(_red(
+        "[stop] Аккаунт заблокирован перевозчиком — процесс остановлен. "
+        "Каждый запрос с заблокированного аккаунта может продлить блок: "
+        "не запускайте его, пока блок не снимут."
+    ))
+    flush_notifications()
+    return ACCOUNT_BLOCKED_EXIT_CODE
+
+
+def _watch_loop(*, once: bool, force_rebook: bool) -> int:
     secrets_file = api_secrets_env_path()
     headers: dict[str, str] | None = None
 
@@ -1327,6 +1431,12 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
         f"Слот: {slot_label} шаг 0.1с "
         f"(каждые {period}с — {rate}, {req_per_cycle} HTTP за цикл)"
     )
+    gap = search_min_gap_sec()
+    if gap > period:
+        print(
+            f"[limit] не больше {env('API_MAX_SEARCHES_PER_HOUR')} поисков в час — "
+            f"проверка не чаще раза в {gap:.0f}с"
+        )
     ua = current_ios_user_agent()
     print(f"[ua] {ua}  (смена через {ios_user_agent_rotate_in_min():.0f} мин)")
     if api_delay_enabled():
@@ -1373,10 +1483,14 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
 
     state = load_state()
     error_tracker = RepeatedErrorTracker()
+    breaker = UnknownErrorBreaker(unknown_error_stop_after())
+    last_check_at: float | None = None
 
     try:
         while True:
+            wait_for_search_budget(last_check_at)
             wait_for_check_slot()
+            last_check_at = time.monotonic()
             started = time.strftime("%H:%M:%S")
             pax_names = format_passenger_names()
             print(f"[check] {started} {route_line(date_label)}, passenger: {pax_names}")
@@ -1388,6 +1502,8 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
             # Ошибка, уже записанная в журнал, ниже приходит ещё раз как подсказка
             # цикла — без флага каждая попадала в «Ошибки» дважды.
             error_reported = False
+            # Тип ошибки цикла для предохранителя; None — цикл нормальный.
+            cycle_key: str | None = None
             try:
                 available, items, avail_body = run_check_once(
                     headers,
@@ -1411,7 +1527,8 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
                 # У сетевых ошибок текст и так говорит всё; имя класса только
                 # путает: ResultUnknown на поиске — не «бронь под вопросом».
                 detail = str(exc) if isinstance(exc, RequestFailed) else f"{type(exc).__name__}: {exc}"
-                report_error(classify_error_text(str(exc)) or "other", detail=detail)
+                cycle_key = classify_error_text(str(exc)) or "other"
+                report_error(cycle_key, detail=detail)
                 error_reported = True
                 available, items, avail_body = False, [str(exc)], None
 
@@ -1499,6 +1616,7 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
                 if not error_reported and not _is_normal_no_seats_hint(hint):
                     # 429 уже записан там, где пойман, — с запросом и Retry-After.
                     journal_key = classify_error_text(hint)
+                    cycle_key = journal_key
                     if journal_key and journal_key != "rate_limit":
                         report_error(journal_key, detail=hint)
                 if err_key == "rate_limit":
@@ -1518,6 +1636,19 @@ def run_watch_loop(*, once: bool = False, force_rebook: bool = False) -> int:
                 "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
             save_state(state)
+
+            if breaker.note(cycle_key):
+                hint = items[0] if items else ""
+                report_error(
+                    "unknown_stop",
+                    detail=f"{breaker.streak} циклов подряд неопознанная ошибка: {hint}",
+                )
+                print(_red(
+                    f"[stop] {breaker.streak} циклов подряд сервер отвечает тем, чего "
+                    "бот не понимает, — процесс остановлен. Посмотрите «Ошибки» и "
+                    "консоль, прежде чем запускать снова."
+                ))
+                return UNKNOWN_ERROR_EXIT_CODE
 
             if once:
                 return 0

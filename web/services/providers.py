@@ -47,6 +47,8 @@ __all__ = [
     "seed_from_legacy",
     "providers_view",
     "delete_provider",
+    "mark_blocked",
+    "clear_block",
     "ProviderError",
 ]
 
@@ -271,7 +273,9 @@ def providers_view(db, service: str = Service.AIRLINES.value) -> list[dict[str, 
         second = provider_slot_second(
             db, provider, period_sec=config.check_period_sec, base_second=config.check_at_second
         )
-        if not provider.is_enabled:
+        if provider.blocked_at is not None:
+            state, tone = f"заблокирован перевозчиком с {provider.blocked_at:%d.%m %H:%M}", "tag-error"
+        elif not provider.is_enabled:
             state, tone = "выключен", ""
         elif missing:
             state, tone = "не заполнено: " + ", ".join(missing), "tag-error"
@@ -300,11 +304,35 @@ def providers_view(db, service: str = Service.AIRLINES.value) -> list[dict[str, 
                 "ip_title": ip_title(db, effective_ip(provider)),
                 "slot_auto": provider.check_at_second is None,
                 "busy_job": busy.get(provider.id),
+                "blocked_at": provider.blocked_at,
+                "blocked_reason": provider.blocked_reason,
                 "state": state,
                 "tone": tone,
             }
         )
     return out
+
+
+def mark_blocked(db, provider: Provider, reason: str) -> None:
+    """Отметить блок перевозчиком. Повторная отметка время первой не сдвигает."""
+    import datetime as dt
+
+    if provider.blocked_at is None:
+        provider.blocked_at = dt.datetime.now()
+    provider.blocked_reason = (reason or "")[:300]
+
+
+def clear_block(db, provider: Provider) -> str:
+    """Человек убедился, что блок сняли: аккаунт снова можно запускать."""
+    if provider.blocked_at is None:
+        return f"Аккаунт «{provider.title}» и не был заблокирован"
+    provider.blocked_at = None
+    provider.blocked_reason = ""
+    db.commit()
+    return (
+        f"Отметка о блоке у «{provider.title}» снята. Запускайте осторожно: "
+        "если блок на самом деле не снят, бот остановится на первом же ответе."
+    )
 
 
 def delete_provider(db, provider: Provider) -> str:

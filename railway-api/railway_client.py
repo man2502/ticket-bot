@@ -17,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core import http_journal  # noqa: E402
 from core.http import HttpClient, RequestFailed, Response, ResultUnknown  # noqa: E402
 from railway_env import base_url, env  # noqa: E402
 
@@ -111,14 +112,25 @@ def api_call(
     idempotent: bool | None = None,
 ) -> Response:
     """Полный ответ (статус, заголовки, тело, латентность). Бросает RequestFailed."""
-    return get_client().request(
-        method,
-        path,
-        query=query,
-        body=body,
-        headers=headers,
-        idempotent=idempotent,
+    record = {"svc": "railway", "m": method, "ep": path}
+    try:
+        response = get_client().request(
+            method,
+            path,
+            query=query,
+            body=body,
+            headers=headers,
+            idempotent=idempotent,
+        )
+    except RequestFailed as exc:
+        http_journal.write({**record, "st": 0, "err": http_journal.mask(str(exc))[:300]})
+        raise
+    # Тело — только у отказов: список поездов и мест на успехе слишком велик.
+    http_journal.write(
+        {**record, "st": response.status, "ms": round(response.elapsed_ms)},
+        body="" if response.ok else response.text,
     )
+    return response
 
 
 def api_request(

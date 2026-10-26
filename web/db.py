@@ -195,6 +195,17 @@ def _migrate() -> None:
                     text(f"ALTER TABLE {table} ADD COLUMN source_ip VARCHAR(45) NOT NULL DEFAULT ''")
                 )
 
+        # Блок аккаунта перевозчиком: с отметкой панель его не запускает.
+        provider_columns = {
+            row[1] for row in conn.execute(text("PRAGMA table_info(providers)"))
+        }
+        if provider_columns and "blocked_at" not in provider_columns:
+            conn.execute(text("ALTER TABLE providers ADD COLUMN blocked_at DATETIME"))
+        if provider_columns and "blocked_reason" not in provider_columns:
+            conn.execute(
+                text("ALTER TABLE providers ADD COLUMN blocked_reason VARCHAR(300) NOT NULL DEFAULT ''")
+            )
+
     # Отдельным соединением: внутри транзакции PRAGMA foreign_keys не действует.
     _allow_bookings_without_job()
 

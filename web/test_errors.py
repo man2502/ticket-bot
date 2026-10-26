@@ -380,3 +380,112 @@ def test_bad_page_number_falls_back(db) -> None:
 def test_single_page_has_no_pager(db) -> None:
     _fill(db, 3)
     assert 'class="pager"' not in _errors_html(db)
+
+
+# --------------------------------------------------------------------------- #
+# Файлы журналов и сводка кодов ответа
+# --------------------------------------------------------------------------- #
+
+
+def _http_lines(folder: Path, day: str, rows: list[tuple[str, str, int]]) -> None:
+    import json
+
+    folder.mkdir(parents=True, exist_ok=True)
+    with (folder / f"http-{day}.jsonl").open("a", encoding="utf-8") as fh:
+        for ts, acct, status in rows:
+            fh.write(json.dumps({"ts": ts, "svc": "airlines", "acct": acct,
+                                 "ip": "10.0.0.1", "ep": "x", "st": status}) + "\n")
+
+
+def test_error_line_is_also_written_to_the_day_file(db) -> None:
+    from web.services.bot_logs import logs_dir
+    from web.services.runner import _record_error_event
+
+    provider = _provider(db, "Второй")
+    job = _job(db, provider)
+    _record_error_event(db, job.id, _bot_line(key="account_blocked", status=450,
+                                              endpoint="GetAirAvailability",
+                                              detail="Customer Block"))
+
+    (path,) = logs_dir().glob("errors-*.log")
+    line = path.read_text(encoding="utf-8").strip()
+    assert f"процесс #{job.id}" in line
+    assert "Второй" in line
+    assert "account_blocked | HTTP 450 | GetAirAvailability | Customer Block" in line
+
+
+def test_http_summary_counts_codes_per_account(db) -> None:
+    from web.services.bot_logs import STATUS_COLUMNS, http_summary, logs_dir
+
+    now = dt.datetime(2026, 10, 25, 12, 0)
+    _http_lines(logs_dir(), "2026-10-24", [
+        ("2026-10-24 11:00:00.000", "Первый", 200),   # старше суток — не считаем
+        ("2026-10-24 13:00:00.000", "Первый", 450),
+    ])
+    _http_lines(logs_dir(), "2026-10-25", [
+        ("2026-10-25 10:00:00.000", "Первый", 200),
+        ("2026-10-25 10:00:01.000", "Первый", 402),
+        ("2026-10-25 10:00:02.000", "Первый", 0),
+        ("2026-10-25 10:00:03.000", "Второй", 503),
+    ])
+    with (logs_dir() / "http-2026-10-25.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write('{"ts": "2026-10-25 10:00:04", "st"\n')  # оборванная строка
+
+    view = http_summary(now=now)
+    titles = [title for _key, title, _hint in STATUS_COLUMNS]
+    rows = {row["account"]: row for row in view["rows"]}
+
+    first = {titles[i]: cell for i, cell in enumerate(rows["Первый"]["cells"])}
+    assert rows["Первый"]["total"] == 4
+    assert first["2xx"]["count"] == 1 and not first["2xx"]["hot"]
+    assert first["402"]["count"] == 1 and not first["402"]["hot"], "капча — норма, не тревога"
+    assert first["450"]["count"] == 1 and first["450"]["hot"]
+    assert first["нет ответа"]["count"] == 1 and first["нет ответа"]["hot"]
+    second = {titles[i]: cell for i, cell in enumerate(rows["Второй"]["cells"])}
+    assert second["5xx"]["count"] == 1
+
+
+def test_log_files_are_listed_and_downloaded_by_name_only(db) -> None:
+    from web.services.bot_logs import file_for_download, list_files, logs_dir
+
+    _http_lines(logs_dir(), "2026-10-25", [("2026-10-25 10:00:00.000", "Первый", 200)])
+    (logs_dir() / "secret.key").write_text("x", encoding="utf-8")
+
+    assert [f["name"] for f in list_files()] == ["http-2026-10-25.jsonl"]
+    assert file_for_download("http-2026-10-25.jsonl") is not None
+    assert file_for_download("../secret.key") is None
+    assert file_for_download("secret.key") is None
+    assert file_for_download("http-2026-10-26.jsonl") is None
+
+
+def test_old_log_files_are_pruned(db) -> None:
+    from web.services.bot_logs import logs_dir, prune
+
+    old = (dt.date.today() - dt.timedelta(days=61)).isoformat()
+    fresh = dt.date.today().isoformat()
+    for day in (old, fresh):
+        _http_lines(logs_dir(), day, [(f"{day} 10:00:00.000", "Первый", 200)])
+
+    assert prune() == 1
+    assert [p.name for p in logs_dir().iterdir()] == [f"http-{fresh}.jsonl"]
+
+
+def test_errors_page_shows_codes_and_files(db) -> None:
+    from web.services.bot_logs import logs_dir
+
+    now = dt.datetime.now()
+    _http_lines(logs_dir(), now.date().isoformat(),
+                [(now.strftime("%Y-%m-%d %H:%M:%S.000"), "Первый", 450)])
+
+    html = _errors_html(db)
+    assert "Ответы сервера за 24 ч" in html
+    assert "блок аккаунта" in html
+    assert f"/errors/logs/http-{now.date().isoformat()}.jsonl" in html
+
+
+def test_new_error_types_have_titles() -> None:
+    from api_errors import ERROR_KEYS
+
+    from web.services.errors import ERROR_TITLES
+
+    assert ERROR_KEYS == ERROR_TITLES

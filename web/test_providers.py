@@ -949,3 +949,154 @@ def test_settings_page_shows_addresses(db) -> None:
     assert SECOND_IP in html and DEFAULT_IP in html
     assert "119.119.119.119" in html
     assert "Проверить IP" in html
+
+
+# --------------------------------------------------------------------------- #
+# Блок аккаунта перевозчиком (Customer Block, HTTP 450)
+# --------------------------------------------------------------------------- #
+
+BLOCK_LINE = (
+    "[err] account_blocked | HTTP 450 | GetAirAvailability | "
+    "Customer Block: Ваш аккаунт временно заблокирован."
+)
+
+
+def test_block_line_marks_the_account(db) -> None:
+    """Отметка — по строке журнала: она нужна, даже если процесс потом убьют."""
+    from web.services.runner import _record_error_event
+
+    provider = _provider(db, "Первый")
+    job = _job(db, provider=provider)
+    _record_error_event(db, job.id, BLOCK_LINE)
+    db.commit()
+
+    db.refresh(provider)
+    assert provider.blocked_at is not None
+    assert provider.blocked_reason.startswith("Customer Block")
+
+
+def test_blocked_account_is_not_started(db) -> None:
+    from web.services.providers import mark_blocked
+    from web.services.runner import JobStartError, _assign_provider
+
+    blocked = _provider(db, "Заблокированный")
+    mark_blocked(db, blocked, "Customer Block")
+    db.commit()
+
+    with pytest.raises(JobStartError) as exc:
+        _assign_provider(db, _job(db, choice=blocked))
+    assert "заблокирован перевозчиком" in str(exc.value)
+
+
+def test_any_free_provider_skips_the_blocked_one(db) -> None:
+    from web.services.providers import mark_blocked
+    from web.services.runner import _assign_provider
+
+    blocked = _provider(db, "Заблокированный")
+    free = _provider(db, "Свободный")
+    mark_blocked(db, blocked, "Customer Block")
+    db.commit()
+
+    job = _job(db)
+    _assign_provider(db, job)
+    assert job.provider.id == free.id
+
+
+def test_unblock_by_human_allows_start(db) -> None:
+    from web.services.providers import clear_block, mark_blocked
+    from web.services.runner import _assign_provider
+
+    provider = _provider(db, "Первый")
+    mark_blocked(db, provider, "Customer Block")
+    db.commit()
+    assert "снята" in clear_block(db, provider)
+
+    job = _job(db, choice=provider)
+    _assign_provider(db, job)
+    assert job.provider.id == provider.id
+
+
+def test_repeated_block_keeps_the_first_time(db) -> None:
+    import datetime as dt
+
+    from web.services.providers import mark_blocked
+
+    provider = _provider(db, "Первый")
+    mark_blocked(db, provider, "первый")
+    first = provider.blocked_at = dt.datetime(2026, 10, 21, 20, 43)
+    mark_blocked(db, provider, "второй")
+    assert provider.blocked_at == first
+    assert provider.blocked_reason == "второй"
+
+
+def test_exit_codes_4_and_5_match_the_bot() -> None:
+    import api_check
+    import api_client
+    from web.services.runner import (
+        _EXIT_MEANING,
+        ACCOUNT_BLOCKED_EXIT_CODE,
+        UNKNOWN_ERROR_EXIT_CODE,
+    )
+
+    assert ACCOUNT_BLOCKED_EXIT_CODE == api_client.ACCOUNT_BLOCKED_EXIT_CODE
+    assert UNKNOWN_ERROR_EXIT_CODE == api_check.UNKNOWN_ERROR_EXIT_CODE
+    assert _EXIT_MEANING[ACCOUNT_BLOCKED_EXIT_CODE][0] == "failed"
+    assert "заблокирован" in _EXIT_MEANING[ACCOUNT_BLOCKED_EXIT_CODE][1]
+    assert _EXIT_MEANING[UNKNOWN_ERROR_EXIT_CODE][0] == "failed"
+
+
+def test_block_is_announced_by_mail(db, monkeypatch: pytest.MonkeyPatch) -> None:
+    import web.services.notifications as notifications
+    from web.services.providers import mark_blocked
+    from web.services.runner import ACCOUNT_BLOCKED_EXIT_CODE, _notify_stop
+
+    sent = []
+    monkeypatch.setattr(
+        notifications,
+        "send_email",
+        lambda db, *, to, subject, body: sent.append((subject, body))
+        or notifications.SendResult(ok=True, channel="email", recipient=to),
+    )
+    monkeypatch.setattr(notifications, "send_sms", lambda db, **k: None)
+
+    provider = _provider(db, "Первый")
+    mark_blocked(db, provider, "Customer Block: Ваш аккаунт временно заблокирован.")
+    _notify_stop(db, _job(db, provider=provider), ACCOUNT_BLOCKED_EXIT_CODE)
+
+    assert len(sent) == 1
+    subject, body = sent[0]
+    assert "«Первый» заблокирован" in subject
+    assert "Customer Block: Ваш аккаунт" in body
+
+
+def test_settings_page_shows_block_and_unblock_button(db) -> None:
+    from starlette.requests import Request
+
+    from web.models import Role, User
+    from web.routes.settings import settings_page
+    from web.services.providers import mark_blocked
+    from web.security import hash_password
+
+    provider = _provider(db, "Первый")
+    mark_blocked(db, provider, "Customer Block: Ваш аккаунт временно заблокирован.")
+    admin = User(login="root", password_hash=hash_password("x" * 8), role=Role.ADMIN.value)
+    db.add(admin)
+    db.commit()
+
+    request = Request({"type": "http", "method": "GET", "path": "/settings",
+                       "headers": [], "query_string": b""})
+    html = settings_page(request, user=admin, db=db).body.decode("utf-8")
+    assert "Перевозчик заблокировал аккаунт" in html
+    assert f"/settings/providers/{provider.id}/unblock" in html
+
+
+def test_bot_gets_searches_per_hour_and_log_dir(db) -> None:
+    from web.services.bot_env import prepare_launch
+    from web.services.settings import save_service_config
+
+    save_service_config(db, "airlines", {"max_searches_per_hour": 30})
+    job = _job(db, provider=_provider(db, "Первый"))
+    values = _env_values(prepare_launch(db, job).env_file)
+
+    assert values["API_MAX_SEARCHES_PER_HOUR"] == "30"
+    assert values["BOT_HTTP_LOG_DIR"].endswith("logs")
