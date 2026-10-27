@@ -39,6 +39,7 @@ import re
 import time
 from typing import Any
 
+from core.hours import HoursError, in_hours, parse_hours, seconds_until_end
 from core.open_file import open_in_viewer
 from core.term import cyan, green, purple, red
 from core.slots import (
@@ -139,8 +140,21 @@ def api_delay_enabled() -> bool:
     return (env("API_DELAY") or "0").strip().lower() not in ("0", "false", "no", "")
 
 
+# Свободный режим цикла: вне часов точных слотов. В нём бот ходит со случайным
+# интервалом и с паузами между шагами, как человек, а не по ровной сетке.
+# Ставит его главный цикл перед каждой проверкой.
+_relaxed = False
+
+
+def set_relaxed(value: bool) -> None:
+    global _relaxed
+    _relaxed = value
+
+
 def request_jitter_sec() -> float:
-    """Случайная пауза между API-запросами: 0 / 0.1 / 0.2 сек."""
+    """Случайная пауза между API-запросами: 0 / 0.1 / 0.2 сек; в свободном режиме — 0.4–1.5."""
+    if _relaxed:
+        return random.uniform(0.4, 1.5)
     if not api_delay_enabled():
         return 0.0
     return random.choice((0.0, 0.1, 0.2))
@@ -160,7 +174,14 @@ def captcha_wrong_delay_sec() -> float:
 
 
 def captcha_search_delay_sec() -> float:
-    """Пауза после решения капчи перед GetAirAvailability: 1.5–2 сек."""
+    """
+    Пауза после решения капчи перед GetAirAvailability: 1.5–2 сек.
+
+    В свободном режиме — 3–7 сек: человек столько вводит пять цифр. Капча,
+    «введённая» за полторы секунды каждый раз, — ещё одна ровная подпись робота.
+    """
+    if _relaxed:
+        return random.uniform(3.0, 7.0)
     if not api_delay_enabled():
         return 0.0
     return random.uniform(1.5, 2.0)
@@ -376,10 +397,40 @@ def route_line(date_str: str | None = None) -> str:
     return f"{depart} → {arrival}, {date}"
 
 
+def info_check_interval_sec() -> float:
+    """Как часто проверять вход через customers/info (API_INFO_CHECK_MIN, 0 — каждый цикл)."""
+    try:
+        minutes = float(env("API_INFO_CHECK_MIN", "15") or "15")
+    except ValueError:
+        minutes = 15.0
+    return max(0.0, minutes) * 60
+
+
+# Когда в следующий раз проверять вход. 0 — в первом же цикле.
+_info_due_at = 0.0
+
+
+def live_auth(headers: dict[str, str], *, verbose: bool = True, force: bool = False) -> None:
+    """
+    Проверить вход (customers/info), но не в каждом цикле.
+
+    Раньше перед КАЖДЫМ поиском шёл customers/info — настоящее приложение так
+    не делает, и цепочка «профиль → капча → поиск» каждые две минуты сутками
+    узнаётся сразу. Теперь — раз в 10–20 минут (случайно вокруг
+    API_INFO_CHECK_MIN). Протухший токен между проверками не страшен: поиск
+    ответит 401/403, и `_handle_auth_forbidden` проверит вход принудительно.
+    """
+    global _info_due_at
+    if not force and time.monotonic() < _info_due_at:
+        return
+    ensure_live_auth(headers, env_path=api_secrets_env_path(), verbose=verbose)
+    _info_due_at = time.monotonic() + info_check_interval_sec() * random.uniform(0.7, 1.3)
+
+
 def _retry_after_token_refresh(headers: dict[str, str]) -> bool:
     if not auto_refresh_tokens_enabled():
         return False
-    ensure_live_auth(headers, env_path=api_secrets_env_path())
+    live_auth(headers, force=True)
     print("[auth] токены обновлены — повтор запроса")
     return True
 
@@ -783,6 +834,62 @@ def search_min_gap_sec() -> float:
     return 3600.0 / limit if limit > 0 else 0.0
 
 
+def _hours_env(name: str) -> list[tuple[int, int]]:
+    """Интервалы часов из env. Ошибка в строке — предупреждение и «нет интервалов»."""
+    try:
+        return parse_hours(env(name))
+    except HoursError as exc:
+        print(f"[warn] {name}: {exc} — не учитываю")
+        return []
+
+
+def wait_for_quiet_hours() -> bool:
+    """
+    Ночная пауза (API_QUIET_HOURS): ни одного запроса до её конца. True — спали.
+
+    Просыпаемся не ровно в 06:00:00, а в случайную минуту после: десять
+    аккаунтов, разом начинающих поиск в одну секунду, — та же сетка.
+    """
+    left = seconds_until_end(_hours_env("API_QUIET_HOURS"))
+    if left <= 0:
+        return False
+    left += random.uniform(0, 600)
+    until = time.strftime("%H:%M", time.localtime(time.time() + left))
+    print(f"[quiet] ночная пауза — ни одного запроса до {until}")
+    precise_sleep(left)
+    return True
+
+
+def exact_slots_now() -> bool:
+    """Часы точных слотов (API_EXACT_HOURS): сейчас бьём в точную секунду?"""
+    return in_hours(_hours_env("API_EXACT_HOURS"))
+
+
+# Свободный интервал — в 1–1.4 раза длиннее периода или интервала из лимита:
+# в среднем запросов меньше, чем позволяет лимит, и никакой ровной сетки.
+RELAXED_GAP_FACTOR = (1.0, 1.4)
+
+
+def relaxed_delay_sec(last_check_at: float | None) -> float:
+    """Сколько ждать до проверки в свободном режиме."""
+    if last_check_at is None:
+        return random.uniform(1.0, 15.0)
+    base = max(float(check_period_sec()), search_min_gap_sec())
+    target = last_check_at + base * random.uniform(*RELAXED_GAP_FACTOR)
+    return max(0.0, target - time.monotonic())
+
+
+def wait_relaxed(last_check_at: float | None) -> None:
+    """Свободный режим: случайный интервал, случайная секунда, прогрев перед запросом."""
+    delay = relaxed_delay_sec(last_check_at)
+    print(f"[slot] свободный режим: проверка через {delay:.0f}с")
+    deadline = time.monotonic() + delay
+    if delay > WARMUP_LEAD_SEC:
+        precise_sleep(delay - WARMUP_LEAD_SEC)
+    warmup_connection()
+    precise_sleep(max(0.0, deadline - time.monotonic()))
+
+
 def wait_for_search_budget(last_check_at: float | None) -> None:
     """Выдержать интервал из лимита поисков; дальше слот выберет wait_for_check_slot."""
     gap = search_min_gap_sec()
@@ -1115,7 +1222,7 @@ def run_check_once(
     search_error_retries = 0
 
     try:
-        ensure_live_auth(headers, env_path=api_secrets_env_path(), verbose=verbose)
+        live_auth(headers, verbose=verbose)
     except AuthTransientError as exc:
         print(f"[auth] {exc} — этот цикл без поиска")
         return False, [str(exc)], None
@@ -1437,6 +1544,14 @@ def _watch_loop(*, once: bool, force_rebook: bool) -> int:
             f"[limit] не больше {env('API_MAX_SEARCHES_PER_HOUR')} поисков в час — "
             f"проверка не чаще раза в {gap:.0f}с"
         )
+    if env("API_QUIET_HOURS"):
+        print(f"[quiet] ночная пауза: {env('API_QUIET_HOURS')}")
+    exact = env("API_EXACT_HOURS")
+    print(
+        f"[slot] точная секунда: {exact}, в остальное время — свободный режим"
+        if exact
+        else "[slot] свободный режим: случайный интервал и паузы между шагами"
+    )
     ua = current_ios_user_agent()
     print(f"[ua] {ua}  (смена через {ios_user_agent_rotate_in_min():.0f} мин)")
     if api_delay_enabled():
@@ -1488,8 +1603,14 @@ def _watch_loop(*, once: bool, force_rebook: bool) -> int:
 
     try:
         while True:
-            wait_for_search_budget(last_check_at)
-            wait_for_check_slot()
+            wait_for_quiet_hours()
+            relaxed = not exact_slots_now()
+            set_relaxed(relaxed)
+            if relaxed:
+                wait_relaxed(last_check_at)
+            else:
+                wait_for_search_budget(last_check_at)
+                wait_for_check_slot()
             last_check_at = time.monotonic()
             started = time.strftime("%H:%M:%S")
             pax_names = format_passenger_names()

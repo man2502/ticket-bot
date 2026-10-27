@@ -231,6 +231,19 @@
       {{ text_field('check_at_second', 'Секунда первой отметки', svc.check_at_second, '0–59') }}
     </div>
     <p class="muted small">Отметки: {{ svc.slot_marks }}</p>
+    {% if svc.needs_auth %}
+    <div class="field-grid">
+      {{ text_field('quiet_hours', 'Ночная пауза', svc.quiet_hours,
+                    'В эти часы ни одного запроса. Например: 01:00-06:00. Пусто — без паузы') }}
+      {{ text_field('exact_hours', 'Часы точных слотов', svc.exact_hours,
+                    'Когда открываются продажи: в эти часы — точная секунда, вне их — случайный интервал. Например: 08:00-09:00, 19:00-20:00') }}
+    </div>
+    <p class="muted small">
+      Вне часов точных слотов бот ходит со случайным интервалом (в 1–1,4 раза
+      длиннее периода и не чаще лимита «Поисков в час») и с паузами между шагами,
+      как человек. Ровная сетка «каждые 120 с на :10» видна на стороне сайта сразу.
+    </p>
+    {% endif %}
 
     <h3>Ограничители</h3>
     <div class="field-grid">
@@ -406,7 +419,14 @@
                     ('Пусто — авто, сейчас :%02d' % p.slot_second) if p.slot_auto
                     else ('Вручную, :%02d' % p.slot_second)) }}
       {{ source_ip_field(p.source_ip, svc.source_ips, 'Сейчас: ' ~ p.ip_title) }}
+      {{ text_field('contact_email', 'Email для брони', p.contact_email,
+                    'Почта владельца аккаунта — её перевозчик видит в брони', 'email') }}
+      {{ text_field('contact_phone', 'Телефон для брони', p.contact_phone,
+                    'Телефон владельца аккаунта') }}
     </div>
+    {% if p.contact_warning %}
+    <div class="alert">{{ p.contact_warning }}</div>
+    {% endif %}
     <label class="checkbox">
       <input type="checkbox" name="is_enabled" {% if p.is_enabled %}checked{% endif %}>
       Аккаунт включён
@@ -438,6 +458,8 @@
       </label>
       {{ text_field('check_at_second', 'Секунда отметки', '', 'Пусто — авто') }}
       {{ source_ip_field('', svc.source_ips, 'С какого адреса ходит аккаунт') }}
+      {{ text_field('contact_email', 'Email для брони', '', 'Почта владельца аккаунта', 'email') }}
+      {{ text_field('contact_phone', 'Телефон для брони', '', 'Телефон владельца аккаунта') }}
     </div>
     <input type="hidden" name="is_enabled" value="1">
     <div class="form-actions">

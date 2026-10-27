@@ -176,6 +176,13 @@ def save_service_config(db, service: str, data: dict[str, Any]) -> ServiceConfig
         if field in data:
             setattr(config, field, bool(data[field]))
 
+    for field in ("quiet_hours", "exact_hours"):
+        if field in data:
+            from core.hours import format_hours, parse_hours
+
+            # HoursError уходит наверх: роут покажет человеку, что не так.
+            setattr(config, field, format_hours(parse_hours(str(data[field] or ""))))
+
     if "check_period_sec" in data:
         # Не clamp, а выбор из списка: 45 секунд — ровная сетка, которой у
         # живого человека не бывает, и она видна на стороне сайта.
@@ -257,6 +264,8 @@ def service_config_view(db, service: str) -> dict[str, Any]:
         "max_parallel": config.max_parallel,
         "allow_shared_passengers": config.allow_shared_passengers,
         "auto_book": config.auto_book,
+        "quiet_hours": config.quiet_hours,
+        "exact_hours": config.exact_hours,
     }
 
 

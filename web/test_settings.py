@@ -796,3 +796,69 @@ def test_old_database_gets_the_new_column(tmp_path: Path, monkeypatch: pytest.Mo
     # У railway галочки до бота не доезжали: он всегда ходил дважды в минуту,
     # и обновление панели не должно молча вдвое замедлить поиск.
     assert rows["railway"] == 30
+
+
+def test_old_database_gets_night_pause_switched_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ночная пауза ради того и делалась: у существующей базы она включается сразу."""
+    import sqlite3
+
+    import web.config as config
+    import web.crypto as crypto
+    import web.db as db_module
+
+    old_db = tmp_path / "old.db"
+    con = sqlite3.connect(old_db)
+    con.executescript(
+        """
+        CREATE TABLE service_configs (
+            service VARCHAR(16) NOT NULL PRIMARY KEY,
+            is_enabled BOOLEAN NOT NULL,
+            login VARCHAR(64) NOT NULL,
+            password_enc TEXT NOT NULL,
+            extra_login VARCHAR(64) NOT NULL,
+            extra_password_enc TEXT NOT NULL,
+            check_at_second INTEGER NOT NULL,
+            check_period_sec INTEGER NOT NULL,
+            max_searches_per_hour INTEGER NOT NULL,
+            repeated_error_pause_after INTEGER NOT NULL,
+            rate_limit_pause_sec INTEGER NOT NULL,
+            captcha_manual BOOLEAN NOT NULL,
+            captcha_max_attempts INTEGER NOT NULL,
+            auto_book BOOLEAN NOT NULL,
+            updated_at DATETIME NOT NULL
+        );
+        INSERT INTO service_configs VALUES
+            ('airlines', 1, '', '', '', '', 0, 120, 30, 3, 150, 0, 5, 1, '2026-10-20 12:00:00');
+        """
+    )
+    con.commit()
+    con.close()
+
+    monkeypatch.setenv("TICKET_DB_PATH", str(old_db))
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(crypto, "SECRET_KEY_FILE", tmp_path / "secret.key")
+    monkeypatch.setattr(crypto, "SESSION_KEY_FILE", tmp_path / "session.key")
+    monkeypatch.delenv("TICKET_SECRET_KEY", raising=False)
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_SessionFactory", None)
+
+    db_module.init_db()
+
+    con = sqlite3.connect(old_db)
+    row = con.execute(
+        "SELECT quiet_hours, exact_hours FROM service_configs WHERE service = 'airlines'"
+    ).fetchone()
+    con.close()
+    assert row == ("01:00-06:00", "")
+
+
+def test_hours_are_normalised_and_garbage_refused(db) -> None:
+    from core.hours import HoursError
+    from web.services.settings import save_service_config
+
+    config = save_service_config(db, "airlines", {"quiet_hours": "1-6", "exact_hours": " 8:00-9:00 ,19-20"})
+    assert config.quiet_hours == "01:00-06:00"
+    assert config.exact_hours == "08:00-09:00, 19:00-20:00"
+
+    with pytest.raises(HoursError):
+        save_service_config(db, "airlines", {"quiet_hours": "всю ночь"})

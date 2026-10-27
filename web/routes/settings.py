@@ -259,8 +259,17 @@ async def save_service(
         # Галочка есть только у самолётов. Для поездов её не передаём,
         # иначе сохранение их формы молча выключало бы настройку.
         data["allow_shared_passengers"] = "allow_shared_passengers" in raw
+        data["quiet_hours"] = str(raw.get("quiet_hours", ""))
+        data["exact_hours"] = str(raw.get("exact_hours", ""))
 
-    save_service_config(db, service, data)
+    from core.hours import HoursError
+
+    try:
+        save_service_config(db, service, data)
+    except HoursError as exc:
+        db.rollback()
+        return _page(request, user, db, is_error=True,
+                     message=f"{SERVICE_TITLES[service]}: часы не сохранены — {exc}")
     return _page(request, user, db, message=f"{SERVICE_TITLES[service]}: настройки сохранены")
 
 
@@ -277,6 +286,8 @@ async def _provider_form(request: Request) -> dict[str, object]:
         "password": str(raw.get("password", "")),
         "check_at_second": str(raw.get("check_at_second", "")),
         "source_ip": str(raw.get("source_ip", "")),
+        "contact_email": str(raw.get("contact_email", "")),
+        "contact_phone": str(raw.get("contact_phone", "")),
         # Флажок приходит в форме, только если отмечен.
         "is_enabled": "is_enabled" in raw,
     }

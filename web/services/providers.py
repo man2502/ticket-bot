@@ -142,6 +142,10 @@ def save_provider(db, provider: Provider | None, data: dict[str, Any]) -> Provid
         provider.login = str(data["login"] or "").strip()[:64]
     if "is_enabled" in data:
         provider.is_enabled = bool(data["is_enabled"])
+    if "contact_email" in data:
+        provider.contact_email = str(data["contact_email"] or "").strip()[:255]
+    if "contact_phone" in data:
+        provider.contact_phone = str(data["contact_phone"] or "").strip()[:32]
 
     if "password" in data:
         raw = str(data["password"] or "").strip()
@@ -267,7 +271,8 @@ def providers_view(db, service: str = Service.AIRLINES.value) -> list[dict[str, 
     config = get_service_config(db, service)
     busy = busy_provider_ids(db)
     out: list[dict[str, Any]] = []
-    for provider in list_providers(db, service):
+    all_providers = list_providers(db, service)
+    for provider in all_providers:
         blocker = provider_blocker(db, provider.id)
         missing = provider_missing(provider)
         second = provider_slot_second(
@@ -306,11 +311,45 @@ def providers_view(db, service: str = Service.AIRLINES.value) -> list[dict[str, 
                 "busy_job": busy.get(provider.id),
                 "blocked_at": provider.blocked_at,
                 "blocked_reason": provider.blocked_reason,
+                "contact_email": provider.contact_email,
+                "contact_phone": provider.contact_phone,
+                "contact_warning": contact_warning(provider, all_providers),
                 "state": state,
                 "tone": tone,
             }
         )
     return out
+
+
+def _same(a: str, b: str) -> bool:
+    """Тот же контакт: регистр и всё, кроме букв, цифр и @, не важны."""
+    def norm(value: str) -> str:
+        return "".join(ch for ch in (value or "").lower() if ch.isalnum() or ch == "@")
+
+    return bool(norm(a)) and norm(a) == norm(b)
+
+
+def contact_warning(provider: Provider, providers: list[Provider]) -> str:
+    """
+    Предупредить, если по контактам брони аккаунты легко связать между собой.
+
+    Перевозчик видит email и телефон в каждой брони. Одни и те же контакты
+    у нескольких аккаунтов — это для него один человек с несколькими
+    кабинетами: так блок одного аккаунта потянул за собой второй.
+    """
+    if not (provider.contact_email and provider.contact_phone):
+        return (
+            "Контакты брони не заданы — берутся общие из настроек, одни на все "
+            "аккаунты. Перевозчику так легко связать аккаунты между собой."
+        )
+    for other in providers:
+        if other.id == provider.id:
+            continue
+        if _same(other.contact_email, provider.contact_email) or _same(
+            other.contact_phone, provider.contact_phone
+        ):
+            return f"Те же контакты брони, что у «{other.title}» — аккаунты легко связать."
+    return ""
 
 
 def mark_blocked(db, provider: Provider, reason: str) -> None:

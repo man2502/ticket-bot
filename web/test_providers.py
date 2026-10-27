@@ -1112,3 +1112,115 @@ def test_journal_gets_the_default_address_too(db) -> None:
 
     assert values["API_SOURCE_IP"] == ""
     assert values["API_EFFECTIVE_IP"] == DEFAULT_IP
+
+
+# --------------------------------------------------------------------------- #
+# Повторная бронь тех же людей на тот же рейс
+# --------------------------------------------------------------------------- #
+
+
+def _book_and_unblock(path: Path, *, doc: str, route: str) -> None:
+    """Бронь создана, потом человек снял блокировку — запись ушла в архив."""
+    from core.booking_guard import BookingGuard, passenger_tag
+
+    guard = BookingGuard(path)
+    guard.begin("k1", passengers=passenger_tag(doc), route=route)
+    guard.settle("k1", ok=True, booking_number="4ECK1Y")
+    guard.clear("k1")
+
+
+def test_rebooking_same_people_same_flight_is_refused(db) -> None:
+    """Так у одного пассажира набралось четыре брони за двое суток — и блок аккаунта."""
+    from web.services.bookings import job_start_blocker
+    from web.services.providers import provider_journal_path
+
+    first, second = _provider(db, "Первый"), _provider(db, "Второй")
+    _book_and_unblock(provider_journal_path(first.id), doc="AA1", route="ASB-MYP 18.09.2026")
+
+    problem = job_start_blocker(db, _job(db, doc="AA1", choice=second))
+    assert "уже забронированы на этот рейс" in problem
+    assert "4ECK1Y" in problem
+
+
+def test_other_date_or_other_people_are_fine(db) -> None:
+    from web.services.bookings import job_start_blocker
+    from web.services.providers import provider_journal_path
+
+    first = _provider(db, "Первый")
+    _book_and_unblock(provider_journal_path(first.id), doc="AA1", route="ASB-MYP 19.09.2026")
+    assert job_start_blocker(db, _job(db, doc="AA1")) == ""
+
+    _book_and_unblock(provider_journal_path(first.id), doc="AA9", route="ASB-MYP 18.09.2026")
+    assert job_start_blocker(db, _job(db, doc="AA2")) == ""
+
+
+def test_conscious_rebook_is_allowed(db) -> None:
+    from web.services.bookings import job_start_blocker
+    from web.services.providers import provider_journal_path
+
+    first = _provider(db, "Первый")
+    _book_and_unblock(provider_journal_path(first.id), doc="AA1", route="ASB-MYP 18.09.2026")
+
+    job = _job(db, doc="AA1")
+    job.params = {**job.params, "allow_rebook": True}
+    db.commit()
+    assert job_start_blocker(db, job) == ""
+
+
+def test_job_form_keeps_rebook_choice() -> None:
+    from starlette.datastructures import FormData
+
+    from web.routes.jobs import _collect_params
+
+    assert _collect_params("airlines", FormData([("allow_rebook", "on")]))["allow_rebook"] is True
+    assert _collect_params("airlines", FormData([]))["allow_rebook"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Свои контакты брони у аккаунта
+# --------------------------------------------------------------------------- #
+
+
+def test_account_contacts_go_to_the_carrier(db) -> None:
+    from web.services.bot_env import booking_contacts, prepare_launch
+
+    own = _provider(db, "Свой", contact_email="owner@example.com", contact_phone="+99365000001")
+    job = _job(db, provider=own)
+    assert booking_contacts(db, job) == ("owner@example.com", "+99365000001")
+
+    values = _env_values(prepare_launch(db, job).env_file)
+    assert values["API_CONTACT_EMAIL"] == "owner@example.com"
+    # Ссылка на оплату по-прежнему уходит в общие настройки панели, а не владельцу.
+    assert values["NOTIFY_EXTERNAL"] == "1"
+
+
+def test_without_own_contacts_the_shared_ones_are_used(db) -> None:
+    from web.services.bot_env import booking_contacts
+
+    job = _job(db, provider=_provider(db, "Без контактов"))
+    assert booking_contacts(db, job)[0] == "pay@example.com"
+
+
+def test_contact_warnings(db) -> None:
+    from web.services.providers import contact_warning, list_providers
+
+    a = _provider(db, "А", contact_email="a@example.com", contact_phone="+99365000001")
+    b = _provider(db, "Б", contact_email="A@Example.com", contact_phone="+99365000002")
+    c = _provider(db, "В", contact_email="c@example.com", contact_phone="+99365000003")
+    d = _provider(db, "Г")
+    everyone = list_providers(db)
+
+    assert "«Б»" in contact_warning(a, everyone)
+    assert contact_warning(c, everyone) == ""
+    assert "не заданы" in contact_warning(d, everyone)
+    assert b.contact_email == "A@Example.com"
+
+
+def test_bot_gets_quiet_and_exact_hours(db) -> None:
+    from web.services.bot_env import prepare_launch
+    from web.services.settings import save_service_config
+
+    save_service_config(db, "airlines", {"exact_hours": "08:00-09:00"})
+    values = _env_values(prepare_launch(db, _job(db, provider=_provider(db, "Первый"))).env_file)
+    assert values["API_QUIET_HOURS"] == "01:00-06:00"
+    assert values["API_EXACT_HOURS"] == "08:00-09:00"

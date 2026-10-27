@@ -205,6 +205,26 @@ def _migrate() -> None:
             conn.execute(
                 text("ALTER TABLE providers ADD COLUMN blocked_reason VARCHAR(300) NOT NULL DEFAULT ''")
             )
+        # Свои контакты брони у аккаунта: общие связывали аккаунты между собой.
+        for column, size in (("contact_email", 255), ("contact_phone", 32)):
+            if provider_columns and column not in provider_columns:
+                conn.execute(
+                    text(f"ALTER TABLE providers ADD COLUMN {column} VARCHAR({size}) NOT NULL DEFAULT ''")
+                )
+
+        # Ночная пауза включается сразу и у существующих баз — ради неё всё и
+        # делалось; часы точных слотов — пусто, их человек задаёт сам.
+        if columns and "quiet_hours" not in columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE service_configs "
+                    "ADD COLUMN quiet_hours VARCHAR(64) NOT NULL DEFAULT '01:00-06:00'"
+                )
+            )
+        if columns and "exact_hours" not in columns:
+            conn.execute(
+                text("ALTER TABLE service_configs ADD COLUMN exact_hours VARCHAR(64) NOT NULL DEFAULT ''")
+            )
 
     # Отдельным соединением: внутри транзакции PRAGMA foreign_keys не действует.
     _allow_bookings_without_job()

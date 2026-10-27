@@ -201,6 +201,17 @@ def job_start_blocker(db, job: Job) -> str:
     """
     tags = _job_tags(job)
 
+    if not job.params.get("allow_rebook"):
+        previous = previous_booking(db, job)
+        if previous is not None:
+            return (
+                f"Эти пассажиры уже забронированы на этот рейс: {previous.started_at}"
+                + (f", бронь {previous.booking_number}" if previous.booking_number else "")
+                + ". Повторные брони тех же людей без оплаты — прямой путь к блоку "
+                "аккаунта. Если прежняя бронь отменена и вы понимаете риск, создайте "
+                "процесс с галочкой «Повторная бронь»."
+            )
+
     for blocker in blockers(db, Service.AIRLINES.value):
         record = blocker.record
         record_tags = split_tags(getattr(record, "passengers", ""))
@@ -238,6 +249,33 @@ def job_start_blocker(db, job: Job) -> str:
                 f"и тех же людей — это две брони и два счёта."
             )
     return ""
+
+
+def previous_booking(db, job: Job):
+    """
+    Состоявшаяся бронь тех же пассажиров на тот же маршрут и дату — в любом
+    журнале и в любом аккаунте, включая записи, с которых сняли блокировку.
+
+    Снятая блокировка — не повод бронировать заново: именно так у одного
+    пассажира за двое суток набралось четыре брони, и аккаунт заблокировали.
+    Записи без маршрута (сделаны до его появления в журнале) не учитываются.
+    """
+    from core.booking_guard import route_key
+
+    tags = _job_tags(job)
+    if not tags:
+        return None
+    route = route_key(job.source, job.destination, job.depart_date)
+    for journal in journals(db, Service.AIRLINES.value):
+        guard = journal.guard()
+        for record in (*guard.records(), *guard.archived()):
+            if (
+                record.status == DONE
+                and record.route == route
+                and split_tags(record.passengers) & tags
+            ):
+                return record
+    return None
 
 
 def _parse_time(raw: str) -> dt.datetime | None:

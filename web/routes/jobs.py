@@ -278,6 +278,9 @@ def _collect_params(service: str, raw) -> dict:
         "flight_index": str(raw.get("flight_index", "")).strip(),
         "flight_time": str(raw.get("flight_time", "")).strip(),
         "strict": strict,
+        # Осознанная повторная бронь тех же людей на тот же рейс (прежняя
+        # отменена). Без галочки панель такой процесс не запустит.
+        "allow_rebook": "allow_rebook" in raw,
         # Пусто = любой свободный аккаунт, выбирается при каждом запуске.
         "provider": provider if provider.isdigit() else "",
     }

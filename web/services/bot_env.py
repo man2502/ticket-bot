@@ -121,6 +121,12 @@ def booking_contacts(db, job: Job) -> tuple[str, str]:
 
     email = (job.notify_email or "").strip() or get_setting(db, "default_notify_email")
     phone = (job.notify_phone or "").strip() or get_setting(db, "default_notify_phone")
+    # Свои контакты аккаунта — первыми: общие на все аккаунты позволяли
+    # перевозчику связать их между собой (см. Provider.contact_email).
+    provider = job.provider if job.service == Service.AIRLINES.value else None
+    if provider is not None:
+        email = provider.contact_email or email
+        phone = provider.contact_phone or phone
     return email.strip(), phone.strip()
 
 
@@ -225,6 +231,9 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
         # «Поисков в час» из настроек. Раньше до бота не доходило вовсе:
         # при 30 в час он делал 60, круглые сутки.
         "API_MAX_SEARCHES_PER_HOUR": config.max_searches_per_hour,
+        # Ночная пауза и часы точных слотов (core.hours).
+        "API_QUIET_HOURS": config.quiet_hours,
+        "API_EXACT_HOURS": config.exact_hours,
         # У каждого аккаунта своя секунда: с одного адреса в одну и ту же
         # секунду — ровно та картина, по которой сайт режет запросы.
         "API_CHECK_AT_SEC": provider_slot_second(

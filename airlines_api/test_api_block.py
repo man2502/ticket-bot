@@ -312,3 +312,130 @@ def test_no_log_dir_means_no_files(server, tmp_path: Path, monkeypatch) -> None:
     api_client.api_call("GET", "customers/info", headers={})
 
     assert not (tmp_path / "logs").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Меньше похожести на робота: ночь, свободный режим, редкий customers/info
+# --------------------------------------------------------------------------- #
+
+
+def test_quiet_hours_sleep_until_the_end(monkeypatch) -> None:
+    import datetime as dt
+
+    import core.hours as hours
+
+    monkeypatch.setenv("API_QUIET_HOURS", "01:00-06:00")
+    monkeypatch.setattr(hours.dt, "datetime", _FrozenClock(dt.datetime(2026, 10, 27, 5, 0)))
+    monkeypatch.setattr(api_check.random, "uniform", lambda a, b: 0.0)
+    slept: list[float] = []
+    monkeypatch.setattr(api_check, "precise_sleep", slept.append)
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert api_check.wait_for_quiet_hours() is True
+    assert slept == [pytest.approx(3600)]
+
+
+def test_no_quiet_hours_no_sleep(monkeypatch) -> None:
+    monkeypatch.setenv("API_QUIET_HOURS", "")
+    slept: list[float] = []
+    monkeypatch.setattr(api_check, "precise_sleep", slept.append)
+    assert api_check.wait_for_quiet_hours() is False
+    assert slept == []
+
+
+def test_bad_hours_are_ignored_with_a_warning(monkeypatch) -> None:
+    monkeypatch.setenv("API_EXACT_HOURS", "утром")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert api_check.exact_slots_now() is False
+    assert "[warn] API_EXACT_HOURS" in out.getvalue()
+
+
+def test_relaxed_interval_is_random_and_not_shorter_than_the_limit(monkeypatch) -> None:
+    monkeypatch.setenv("API_CHECK_PERIOD_SEC", "60")
+    monkeypatch.setenv("API_MAX_SEARCHES_PER_HOUR", "30")  # не чаще раза в 120 с
+    monkeypatch.setattr(api_check.time, "monotonic", lambda: 1000.0)
+
+    delays = set()
+    for factor in (1.0, 1.2, 1.4):
+        monkeypatch.setattr(api_check.random, "uniform", lambda a, b, f=factor: f)
+        delays.add(round(api_check.relaxed_delay_sec(1000.0)))
+    assert delays == {120, 144, 168}
+
+
+def test_relaxed_mode_pauses_between_steps_like_a_human(monkeypatch) -> None:
+    try:
+        api_check.set_relaxed(True)
+        assert 3.0 <= api_check.captcha_search_delay_sec() <= 7.0
+        assert 0.4 <= api_check.request_jitter_sec() <= 1.5
+        api_check.set_relaxed(False)
+        monkeypatch.setenv("API_DELAY", "0")
+        assert api_check.captcha_search_delay_sec() == 0.0
+        assert api_check.request_jitter_sec() == 0.0
+    finally:
+        api_check.set_relaxed(False)
+
+
+def test_customer_info_is_not_checked_every_cycle(monkeypatch) -> None:
+    calls: list[int] = []
+    monkeypatch.setattr(api_check, "ensure_live_auth", lambda headers, **kw: calls.append(1))
+    monkeypatch.setattr(api_check, "_info_due_at", 0.0)
+    monkeypatch.setenv("API_INFO_CHECK_MIN", "15")
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(api_check.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(api_check.random, "uniform", lambda a, b: 1.0)
+
+    api_check.live_auth({})
+    clock["now"] += 120
+    api_check.live_auth({})
+    assert len(calls) == 1, "через две минуты профиль ещё не проверяем"
+
+    api_check.live_auth({}, force=True)
+    assert len(calls) == 2, "после отказа поиска — проверяем сразу"
+
+    clock["now"] += 15 * 60 + 1
+    api_check.live_auth({})
+    assert len(calls) == 3
+
+
+def test_zero_interval_means_every_cycle(monkeypatch) -> None:
+    calls: list[int] = []
+    monkeypatch.setattr(api_check, "ensure_live_auth", lambda headers, **kw: calls.append(1))
+    monkeypatch.setattr(api_check, "_info_due_at", 0.0)
+    monkeypatch.setenv("API_INFO_CHECK_MIN", "0")
+    api_check.live_auth({})
+    api_check.live_auth({})
+    assert len(calls) == 2
+
+
+class _FrozenClock:
+    """Подмена datetime.datetime с фиксированным now()."""
+
+    def __init__(self, moment):
+        self._moment = moment
+
+    def now(self):
+        return self._moment
+
+    def __getattr__(self, name):
+        import datetime as dt
+
+        return getattr(dt.datetime, name)
+
+
+# --------------------------------------------------------------------------- #
+# Маршрут в журнале броней
+# --------------------------------------------------------------------------- #
+
+
+def test_journal_keeps_route_of_the_booking(tmp_path: Path) -> None:
+    from core.booking_guard import BookingGuard, route_key
+
+    guard = BookingGuard(tmp_path / "journal.json")
+    guard.begin("k", passengers="t1", route=route_key("crz", "asb", "30.10.2026"))
+    guard.settle("k", ok=True, booking_number="PNR1")
+
+    assert BookingGuard(tmp_path / "journal.json").get("k").route == "CRZ-ASB 30.10.2026"
+    guard.clear("k")
+    (archived,) = list(BookingGuard(tmp_path / "journal.json").archived())
+    assert archived.route == "CRZ-ASB 30.10.2026", "после снятия блокировки маршрут остаётся"

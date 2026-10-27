@@ -173,6 +173,17 @@
       Выключено — если на выбранном мест нет, возьмём другой подходящий
     </span>
   </label>
+  {% if providers %}
+  <label class="checkbox">
+    <input type="checkbox" name="allow_rebook" {% if form.allow_rebook %}checked{% endif %}>
+    Повторная бронь
+    <span class="field-hint">
+      Если эти люди уже забронированы на этот рейс, процесс не запустится:
+      повторные брони без оплаты — прямой путь к блоку аккаунта. Отметьте,
+      только если прежняя бронь отменена.
+    </span>
+  </label>
+  {% endif %}
 
   <h3 class="cluster">{{ icon('send') }}Куда сообщить</h3>
   <p class="muted small">

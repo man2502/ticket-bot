@@ -30,7 +30,13 @@ REPO_ROOT = API_ROOT.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.booking_guard import AlreadySettled, BookingGuard, booking_key, passenger_tags
+from core.booking_guard import (
+    AlreadySettled,
+    BookingGuard,
+    booking_key,
+    passenger_tags,
+    route_key,
+)
 from api_rate_limit import wait_if_paused
 from core.term import green
 from api_client import RequestFailed, ResultUnknown, api_call
@@ -951,7 +957,11 @@ def _book_one_flight(
     # Пишем pending НА ДИСК до отправки: если процесс умрёт между POST и ответом,
     # следующий запуск увидит незакрытую попытку и не станет бронировать вслепую.
     try:
-        idempotency_key = guard.begin(key, passengers=passenger_tags(passengers))
+        idempotency_key = guard.begin(
+            key,
+            passengers=passenger_tags(passengers),
+            route=route_key(env("DEPART_PORT_CODE"), env("ARRIVAL_PORT_CODE"), env("DATE")),
+        )
     except AlreadySettled as exc:
         # Журнал знает про эту бронь больше, чем проверка выше: например,
         # запись появилась между ними. Запрос не отправляем.

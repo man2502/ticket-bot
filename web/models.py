@@ -284,6 +284,13 @@ class ServiceConfig(Base):
     # одновременно, будет две брони и два счёта. Решение за человеком.
     allow_shared_passengers: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # Ночная пауза: в эти часы бот не делает ни одного запроса («01:00-06:00»).
+    # Поиск каждые две минуты в три часа ночи — самый заметный признак робота.
+    quiet_hours: Mapped[str] = mapped_column(String(64), default="01:00-06:00")
+    # Часы точных слотов: в них бот бьёт в точную секунду ради гонки за
+    # открытием продаж. Вне их — случайный интервал. Пусто — точных нет.
+    exact_hours: Mapped[str] = mapped_column(String(64), default="")
+
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
 
@@ -322,6 +329,11 @@ class Provider(Base):
     # аккаунта — повод продлить блок. Снимает её только человек.
     blocked_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     blocked_reason: Mapped[str] = mapped_column(String(300), default="")
+    # Контакты брони этого аккаунта — их перевозчик видит в каждой брони.
+    # Раньше у всех аккаунтов они были общие из настроек, и перевозчику ничего
+    # не стоило связать аккаунты между собой: блок одного тянул за собой другой.
+    contact_email: Mapped[str] = mapped_column(String(255), default="")
+    contact_phone: Mapped[str] = mapped_column(String(32), default="")
 
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now, onupdate=_now)

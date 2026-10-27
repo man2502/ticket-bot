@@ -32,6 +32,7 @@ __all__ = [
     "passenger_tag",
     "passenger_tags",
     "split_tags",
+    "route_key",
     "PENDING",
     "DONE",
     "UNKNOWN",
@@ -68,6 +69,17 @@ class AttemptRecord:
     # Нужны панели, чтобы не пустить второй аккаунт бронировать тех же людей.
     # Пусто — запись старая, и на кого она, неизвестно.
     passengers: str = ""
+    # Маршрут и дата: «CRZ-ASB 30.10.2026» (см. route_key). По нему панель
+    # не даёт повторно бронировать тех же людей на тот же рейс: четыре брони
+    # одного пассажира за двое суток без оплаты — путь к блоку аккаунта.
+    route: str = ""
+
+
+def route_key(source: object, destination: object, date: object) -> str:
+    """«crz», «ASB», « 30.10.2026» → «CRZ-ASB 30.10.2026». Один вид у бота и у панели."""
+    src = str(source or "").strip().upper()
+    dst = str(destination or "").strip().upper()
+    return f"{src}-{dst} {str(date or '').strip()}"
 
 
 def booking_key(*parts: Any) -> str:
@@ -191,7 +203,7 @@ class BookingGuard:
     def _save(self) -> None:
         save_json(self.path, self._data)
 
-    def begin(self, key: str, *, passengers: str = "") -> str:
+    def begin(self, key: str, *, passengers: str = "", route: str = "") -> str:
         """
         Зарегистрировать попытку ДО отправки запроса и вернуть idempotency-key.
 
@@ -219,6 +231,7 @@ class BookingGuard:
             # Пишем на попытке, а не на результате: самые опасные записи —
             # pending и unknown, и как раз по ним нужно знать, на кого бронь.
             passengers=passengers,
+            route=route,
         )
         self._data["attempts"][key] = asdict(record)
         self._save()
