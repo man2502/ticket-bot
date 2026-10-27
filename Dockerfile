@@ -19,14 +19,27 @@ WORKDIR /app
 # закрыт (так бывает в Туркменистане), подставьте зеркало при сборке:
 #   PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker compose build
 ARG PIP_INDEX_URL=https://pypi.org/simple
-ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+# Свой индекс torch (необязательно) — пробуется первым:
+#   TORCH_INDEX_URL=https://... docker compose build
+ARG TORCH_INDEX_URL=
+# Где ещё брать torch под процессор, по порядку: download.pytorch.org бывает
+# недоступен («Network is unreachable»), тогда — университетские зеркала его
+# индекса (Нанкин, Шанхай). У всех один и тот же формат и те же сборки +cpu.
+ARG TORCH_MIRRORS="https://download.pytorch.org/whl/cpu https://mirrors.nju.edu.cn/pytorch/whl/cpu https://mirror.sjtu.edu.cn/pytorch-wheels/cpu"
 
 # torch — сборка только под процессор: обычная тянет CUDA и раздувает образ
-# на несколько гигабайт, а видеокарты на машине нет. Сам torch — с его индекса
-# без зависимостей (их ссылки там ведут на files.pythonhosted.org), зависимости —
-# из PIP_INDEX_URL.
-RUN pip install --no-deps --index-url "$TORCH_INDEX_URL" torch \
-    && pip install torch
+# на несколько гигабайт, а видеокарты на машине нет. Сам torch — с первого
+# доступного индекса без зависимостей (их ссылки там ведут на
+# files.pythonhosted.org), зависимости — из PIP_INDEX_URL. Попытка на индекс
+# короткая: недоступный сервер не должен держать сборку минутами.
+RUN for url in $TORCH_INDEX_URL $TORCH_MIRRORS; do \
+        echo "torch: пробую $url"; \
+        if pip install --no-deps --retries 1 --timeout 30 --index-url "$url" torch; then \
+            ok=1; break; \
+        fi; \
+    done; \
+    [ -n "$ok" ] || { echo "torch: ни один индекс не ответил"; exit 1; }; \
+    pip install torch
 
 # playwright нужен только старому веб-боту в other/, панель его не запускает.
 COPY requirements.txt requirements-web.txt ./
