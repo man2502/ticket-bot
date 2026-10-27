@@ -5,9 +5,9 @@ services:
     build:
       context: .
       args:
-        # Зеркало PyPI, если обычный закрыт: PIP_INDEX_URL=... docker compose build
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
-        # Свой индекс torch, если и запасные зеркала из Dockerfile не отвечают.
+        # Свои индексы пакетов — пробуются первыми, до зеркал из Dockerfile:
+        #   PIP_INDEX_URL=... TORCH_INDEX_URL=... docker compose build
+        PYPI_INDEX_URL: ${PIP_INDEX_URL:-}
         TORCH_INDEX_URL: ${TORCH_INDEX_URL:-}
     image: ticket-panel
     container_name: ticket-panel

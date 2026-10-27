@@ -15,36 +15,31 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Откуда ставить пакеты. pip читает PIP_INDEX_URL сам. Если files.pythonhosted.org
-# закрыт (так бывает в Туркменистане), подставьте зеркало при сборке:
-#   PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker compose build
-ARG PIP_INDEX_URL=https://pypi.org/simple
-# Свой индекс torch (необязательно) — пробуется первым:
-#   TORCH_INDEX_URL=https://... docker compose build
+# Откуда ставить пакеты. В Туркменистане files.pythonhosted.org и
+# download.pytorch.org то доступны, то нет, поэтому у каждого — список зеркал,
+# и пакеты берутся с первого ответившего (docker/pip-try.sh). Свой индекс
+# пробуется первым:
+#   PIP_INDEX_URL=https://... TORCH_INDEX_URL=https://... docker compose build
+ARG PYPI_INDEX_URL=
 ARG TORCH_INDEX_URL=
-# Где ещё брать torch под процессор, по порядку: download.pytorch.org бывает
-# недоступен («Network is unreachable»), тогда — университетские зеркала его
-# индекса (Нанкин, Шанхай). У всех один и тот же формат и те же сборки +cpu.
+ARG PYPI_MIRRORS="https://pypi.org/simple https://pypi.tuna.tsinghua.edu.cn/simple https://mirrors.nju.edu.cn/pypi/web/simple https://mirror.sjtu.edu.cn/pypi/web/simple"
+# Индекс torch и университетские копии его (Нанкин, Шанхай): те же сборки +cpu.
 ARG TORCH_MIRRORS="https://download.pytorch.org/whl/cpu https://mirrors.nju.edu.cn/pytorch/whl/cpu https://mirror.sjtu.edu.cn/pytorch-wheels/cpu"
 
+COPY docker/pip-try.sh /usr/local/bin/pip-try
+RUN sed -i 's/\r$//' /usr/local/bin/pip-try && chmod +x /usr/local/bin/pip-try
+
 # torch — сборка только под процессор: обычная тянет CUDA и раздувает образ
-# на несколько гигабайт, а видеокарты на машине нет. Сам torch — с первого
-# доступного индекса без зависимостей (их ссылки там ведут на
-# files.pythonhosted.org), зависимости — из PIP_INDEX_URL. Попытка на индекс
-# короткая: недоступный сервер не должен держать сборку минутами.
-RUN for url in $TORCH_INDEX_URL $TORCH_MIRRORS; do \
-        echo "torch: пробую $url"; \
-        if pip install --no-deps --retries 1 --timeout 30 --index-url "$url" torch; then \
-            ok=1; break; \
-        fi; \
-    done; \
-    [ -n "$ok" ] || { echo "torch: ни один индекс не ответил"; exit 1; }; \
-    pip install torch
+# на несколько гигабайт, а видеокарты на машине нет. Сам torch — с индекса
+# torch без зависимостей (их ссылки там ведут на files.pythonhosted.org),
+# зависимости — с PyPI или его зеркала.
+RUN pip-try "$TORCH_INDEX_URL $TORCH_MIRRORS" --no-deps torch \
+    && pip-try "$PYPI_INDEX_URL $PYPI_MIRRORS" torch
 
 # playwright нужен только старому веб-боту в other/, панель его не запускает.
 COPY requirements.txt requirements-web.txt ./
 RUN grep -v -i '^playwright' requirements.txt > /tmp/requirements-bots.txt \
-    && pip install -r /tmp/requirements-bots.txt -r requirements-web.txt
+    && pip-try "$PYPI_INDEX_URL $PYPI_MIRRORS" -r /tmp/requirements-bots.txt -r requirements-web.txt
 
 COPY . .
 

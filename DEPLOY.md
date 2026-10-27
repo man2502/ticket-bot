@@ -86,16 +86,14 @@ docker compose logs -f
 `Uvicorn running on http://0.0.0.0:8000`. Первая сборка — несколько минут
 (torch).
 
-torch под процессор сборка берёт с первого ответившего индекса:
-download.pytorch.org, затем зеркала NJU и SJTU — в логе сборки видно
-`torch: пробую …`. Если не ответил ни один, укажите свой:
+Пакеты сборка берёт с первого ответившего индекса — в логе видно
+`pip: пробую …`: PyPI, затем зеркала Tsinghua, NJU, SJTU; torch под процессор —
+download.pytorch.org, затем копии NJU и SJTU. Если не ответил ни один,
+укажите свои — они пробуются первыми:
 
 ```bash
-TORCH_INDEX_URL=https://mirrors.nju.edu.cn/pytorch/whl/cpu docker compose build
+PIP_INDEX_URL=https://... TORCH_INDEX_URL=https://... docker compose build
 ```
-
-Остальные пакеты идут с PyPI; если он закрыт —
-`PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker compose build`.
 
 ## 5. Открыть панель
 
