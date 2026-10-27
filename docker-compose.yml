@@ -4,9 +4,6 @@ services:
   panel:
     build:
       context: .
-      # Сборка — через сеть хоста, как и сама панель: у сети Docker на сервере
-      # бывает свой маршрут наружу, и пакеты при сборке «Network is unreachable».
-      network: host
       args:
         # Зеркало PyPI, если обычный закрыт: PIP_INDEX_URL=... docker compose build
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
