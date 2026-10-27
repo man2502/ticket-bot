@@ -276,7 +276,8 @@ def _journal(
     record: dict[str, Any] = {
         "svc": "airlines",
         "acct": env("API_PROVIDER_NAME") or _masked_phone(),
-        "ip": source_ip(),
+        # Адрес по умолчанию в API_SOURCE_IP пуст — панель передаёт и настоящий.
+        "ip": source_ip() or env("API_EFFECTIVE_IP"),
         "m": method,
         "ep": path,
         "st": status,

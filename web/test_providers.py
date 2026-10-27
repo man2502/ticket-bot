@@ -1100,3 +1100,15 @@ def test_bot_gets_searches_per_hour_and_log_dir(db) -> None:
 
     assert values["API_MAX_SEARCHES_PER_HOUR"] == "30"
     assert values["BOT_HTTP_LOG_DIR"].endswith("logs")
+
+
+def test_journal_gets_the_default_address_too(db) -> None:
+    from web.services.bot_env import prepare_launch
+    from web.services.runner import _assign_provider
+
+    job = _job(db, choice=_provider(db, "По умолчанию"))
+    _assign_provider(db, job)
+    values = _env_values(prepare_launch(db, job).env_file)
+
+    assert values["API_SOURCE_IP"] == ""
+    assert values["API_EFFECTIVE_IP"] == DEFAULT_IP

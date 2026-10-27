@@ -243,6 +243,9 @@ def _airlines_env(db, job: Job, passengers_file: Path, passenger_ids: str) -> di
         # Без явного адреса бот уйдёт с адреса по умолчанию — его и записали
         # в job.source_ip при запуске.
         "API_SOURCE_IP": provider.source_ip,
+        # Настоящий адрес, в том числе «по умолчанию», — для журнала запросов:
+        # без него строки аккаунта с адресом по умолчанию шли с пустым IP.
+        "API_EFFECTIVE_IP": job.source_ip,
         "API_RATE_LIMIT_STATE": rate_limit_state_path(job.source_ip),
         # Чей аккаунт поймал 429 — для журнала ошибок и письма о стопе.
         "API_PROVIDER_NAME": provider.title,
